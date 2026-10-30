@@ -1,0 +1,502 @@
+'use client';
+
+import React, { useState, useEffect, useCallback } from 'react';
+import DashboardLayout from '@/components/DashboardLayout';
+import {
+  MapPin,
+  Plus,
+  Search,
+  Edit2,
+  Trash2,
+  X,
+  Save,
+  AlertCircle,
+  CheckCircle2,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  MapPinOff,
+} from 'lucide-react';
+
+interface LocationItem {
+  id: number;
+  nama_lokasi: string;
+  created_at?: string;
+}
+
+interface PaginationInfo {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export default function MasterLocationPage() {
+  const [items, setItems] = useState<LocationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [pagination, setPagination] = useState<PaginationInfo>({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+  });
+
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Modal States
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Form Field State
+  const [namaLokasi, setNamaLokasi] = useState('');
+
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  const fetchLocations = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+      });
+      if (search.trim()) {
+        params.append('search', search.trim());
+      }
+
+      const res = await fetch(`/api/master-location?${params.toString()}`);
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setItems(data.data || []);
+        if (data.pagination) {
+          setPagination(data.pagination);
+        }
+      } else {
+        showToast('error', data.message || 'Gagal memuat data lokasi.');
+      }
+    } catch {
+      showToast('error', 'Terjadi kesalahan saat memuat data lokasi.');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, search, showToast]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchLocations();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [fetchLocations]);
+
+  const handleOpenAddModal = () => {
+    setIsEditing(false);
+    setSelectedLocation(null);
+    setNamaLokasi('');
+    setIsFormModalOpen(true);
+  };
+
+  const handleOpenEditModal = (item: LocationItem) => {
+    setIsEditing(true);
+    setSelectedLocation(item);
+    setNamaLokasi(item.nama_lokasi || '');
+    setIsFormModalOpen(true);
+  };
+
+  const handleOpenDeleteModal = (item: LocationItem) => {
+    setSelectedLocation(item);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleSaveLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!namaLokasi.trim()) {
+      showToast('error', 'Nama Lokasi wajib diisi!');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const url = isEditing && selectedLocation
+        ? `/api/master-location/${selectedLocation.id}`
+        : '/api/master-location';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nama_lokasi: namaLokasi.trim() }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('success', data.message || 'Data lokasi berhasil disimpan.');
+        setIsFormModalOpen(false);
+        fetchLocations();
+      } else {
+        showToast('error', data.message || 'Gagal menyimpan data lokasi.');
+      }
+    } catch {
+      showToast('error', 'Terjadi kesalahan koneksi saat menyimpan.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteLocation = async () => {
+    if (!selectedLocation) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/master-location/${selectedLocation.id}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('success', data.message || 'Data lokasi berhasil dihapus.');
+        setIsDeleteModalOpen(false);
+        fetchLocations();
+      } else {
+        showToast('error', data.message || 'Gagal menghapus data lokasi.');
+      }
+    } catch {
+      showToast('error', 'Terjadi kesalahan koneksi saat menghapus.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const startEntry = pagination.total > 0 ? (pagination.page - 1) * pagination.limit + 1 : 0;
+  const endEntry = Math.min(pagination.page * pagination.limit, pagination.total);
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6 max-w-7xl mx-auto">
+        {/* Toast Alert Banner */}
+        {toast && (
+          <div
+            className={`fixed top-20 right-6 z-50 px-4 py-3 rounded-xl shadow-lg border flex items-center space-x-3 text-sm animate-in fade-in slide-in-from-top-2 duration-200 ${
+              toast.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            )}
+            <span className="font-medium">{toast.message}</span>
+          </div>
+        )}
+
+        {/* Page Title & Main Actions */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20">
+              <MapPin className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Master Location</h1>
+              <p className="text-xs text-slate-500">Kelola data master lokasi penyimpanan dan cabang</p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleOpenAddModal}
+            className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-semibold rounded-xl shadow-sm transition-all text-sm cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Lokasi Baru</span>
+          </button>
+        </div>
+
+        {/* Search & Pagination Controls */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center space-x-3 w-full sm:w-auto flex-1">
+            <div className="relative flex-1 sm:w-80">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Search className="w-4 h-4" />
+              </div>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Cari ID atau Nama Lokasi..."
+                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-4 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex items-center space-x-2 text-xs text-slate-600">
+              <span>Tampilkan:</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span>data</span>
+            </div>
+
+            <button
+              onClick={fetchLocations}
+              className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer flex items-center space-x-1.5 text-xs font-medium"
+              title="Refresh Data"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Data Table */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <th className="py-3.5 px-4 w-24">ID</th>
+                  <th className="py-3.5 px-4">Nama Lokasi</th>
+                  <th className="py-3.5 px-4 text-center w-36">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {loading ? (
+                  <tr>
+                    <td colSpan={3} className="py-12 text-center text-slate-400">
+                      <div className="flex flex-col items-center space-y-2">
+                        <div className="w-6 h-6 border-2 border-emerald-500/30 border-t-emerald-600 rounded-full animate-spin" />
+                        <span className="text-xs">Memuat data lokasi...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : items.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="py-12 text-center text-slate-400">
+                      <div className="flex flex-col items-center space-y-2">
+                        <MapPinOff className="w-8 h-8 text-slate-300" />
+                        <p className="text-sm font-medium text-slate-600">Tidak ada data lokasi</p>
+                        <p className="text-xs text-slate-400">
+                          {search ? 'Coba ubah kata kunci pencarian' : 'Klik tombol Tambah Lokasi Baru untuk membuat lokasi'}
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  items.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3.5 px-4 font-semibold text-emerald-700 whitespace-nowrap font-mono text-xs">
+                        #{item.id}
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-slate-800">
+                        <div className="flex items-center space-x-2">
+                          <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>{item.nama_lokasi}</span>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center space-x-2">
+                          <button
+                            onClick={() => handleOpenEditModal(item)}
+                            className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            title="Ubah Lokasi"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenDeleteModal(item)}
+                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Hapus Lokasi"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Footer */}
+          {pagination.total > 0 && (
+            <div className="px-6 py-4 border-t border-slate-200/80 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-600">
+              <div>
+                Menampilkan <strong className="text-slate-900">{startEntry}</strong> &ndash;{' '}
+                <strong className="text-slate-900">{endEntry}</strong> dari{' '}
+                <strong className="text-slate-900">{pagination.total.toLocaleString()}</strong> total lokasi
+              </div>
+
+              <div className="flex items-center space-x-1.5">
+                <button
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  disabled={page === 1 || loading}
+                  className="p-2 border border-slate-300 rounded-lg bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  title="Halaman Sebelumnya"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <div className="px-3 py-1.5 font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg">
+                  Hal {pagination.page} / {pagination.totalPages}
+                </div>
+
+                <button
+                  onClick={() => setPage((prev) => Math.min(pagination.totalPages, prev + 1))}
+                  disabled={page >= pagination.totalPages || loading}
+                  className="p-2 border border-slate-300 rounded-lg bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  title="Halaman Selanjutnya"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* FORM MODAL (ADD / EDIT) */}
+        {isFormModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-8">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center space-x-2">
+                  <MapPin className="w-5 h-5 text-emerald-600" />
+                  <h3 className="font-bold text-slate-900">
+                    {isEditing ? 'Ubah Data Lokasi' : 'Tambah Lokasi Baru'}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setIsFormModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveLocation} className="p-6 space-y-4">
+                {isEditing && selectedLocation && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">ID Lokasi</label>
+                    <input
+                      type="text"
+                      value={`#${selectedLocation.id}`}
+                      disabled
+                      className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-xl text-slate-500 text-sm font-mono font-semibold"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Nama Lokasi *</label>
+                  <input
+                    type="text"
+                    value={namaLokasi}
+                    onChange={(e) => setNamaLokasi(e.target.value)}
+                    placeholder="Masukkan nama lokasi (misal: Gudang Utama, Toko Pusat)"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                    required
+                    autoFocus
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-slate-200 flex items-center justify-end space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsFormModalOpen(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition-colors cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm transition-colors shadow-sm flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    {saving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Menyimpan...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        <span>Simpan Lokasi</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* DELETE CONFIRMATION MODAL */}
+        {isDeleteModalOpen && selectedLocation && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150 p-6 space-y-4">
+              <div className="flex items-center space-x-3 text-rose-600">
+                <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center border border-rose-100">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-base">Hapus Lokasi</h3>
+              </div>
+
+              <p className="text-sm text-slate-600">
+                Apakah Anda yakin ingin menghapus lokasi{' '}
+                <strong className="text-slate-900">{selectedLocation.nama_lokasi}</strong> (
+                <span className="font-mono text-emerald-700">#{selectedLocation.id}</span>)?
+              </p>
+
+              <div className="pt-2 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteLocation}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl text-sm transition-colors shadow-sm flex items-center space-x-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Menghapus...</span>
+                    </>
+                  ) : (
+                    <span>Ya, Hapus Lokasi</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+}
