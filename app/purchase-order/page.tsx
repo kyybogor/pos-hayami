@@ -34,7 +34,8 @@ interface BarangItem {
   ukuran: string; // Size
   qty: number;
   uom: string;
-  harga?: number;
+  harga_beli?: number;
+  harga?: number; // Harga Jual
   subtotal?: number;
   image?: string;
 }
@@ -104,6 +105,7 @@ export default function PurchaseOrderPage() {
   const [inputModel, setInputModel] = useState('');
   const [inputSize, setInputSize] = useState('');
   const [inputQty, setInputQty] = useState('');
+  const [inputHargaBeli, setInputHargaBeli] = useState('');
   const [inputHarga, setInputHarga] = useState('');
   const [inputImage, setInputImage] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -237,7 +239,8 @@ export default function PurchaseOrderPage() {
         { header: 'Model', key: 'model', width: 24 },
         { header: 'Size (Ukuran)', key: 'ukuran', width: 18 },
         { header: 'Qty *', key: 'qty', width: 14 },
-        { header: 'Harga Satuan (Rp) *', key: 'harga', width: 22 },
+        { header: 'Harga Beli (Rp)', key: 'harga_beli', width: 20 },
+        { header: 'Harga Jual (Rp) *', key: 'harga', width: 22 },
       ];
 
       // Styling Header Row
@@ -270,6 +273,7 @@ export default function PurchaseOrderPage() {
       // Set column number formats
       ws.getColumn(4).numFmt = '#,##0';
       ws.getColumn(5).numFmt = '#,##0';
+      ws.getColumn(6).numFmt = '#,##0';
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -312,6 +316,7 @@ export default function PurchaseOrderPage() {
       let colModel = -1;
       let colSize = -1;
       let colQty = -1;
+      let colHargaBeli = -1;
       let colHarga = -1;
 
       // Scan 10 baris pertama untuk mendeteksi header
@@ -328,7 +333,9 @@ export default function PurchaseOrderPage() {
             colSize = colNumber;
           } else if (val.includes('qty') || val.includes('jumlah') || val.includes('kuantitas')) {
             colQty = colNumber;
-          } else if (val.includes('harga') || val.includes('price')) {
+          } else if (val.includes('beli') || val.includes('buy')) {
+            colHargaBeli = colNumber;
+          } else if (val.includes('jual') || val.includes('satuan') || val.includes('harga') || val.includes('price')) {
             colHarga = colNumber;
           }
         });
@@ -413,6 +420,7 @@ export default function PurchaseOrderPage() {
         const rawModel = colModel !== -1 ? getCellValueString(row.getCell(colModel)) : '';
         const rawSize = colSize !== -1 ? getCellValueString(row.getCell(colSize)) : '';
         const rawQty = colQty !== -1 ? getCellValueNumber(row.getCell(colQty)) : 0;
+        const rawHargaBeli = colHargaBeli !== -1 ? getCellValueNumber(row.getCell(colHargaBeli)) : 0;
         const rawHarga = colHarga !== -1 ? getCellValueNumber(row.getCell(colHarga)) : 0;
 
         if (rawQty <= 0) return;
@@ -423,6 +431,7 @@ export default function PurchaseOrderPage() {
           ukuran: rawSize,
           qty: Math.round(rawQty),
           uom: 'PCS',
+          harga_beli: rawHargaBeli,
           harga: rawHarga,
           subtotal: Math.round(rawQty) * rawHarga,
           image: '',
@@ -548,6 +557,7 @@ export default function PurchaseOrderPage() {
       return;
     }
 
+    const hargaBeliNum = parseFloat(inputHargaBeli.replace(/[^0-9.]/g, '')) || 0;
     const hargaNum = parseFloat(inputHarga.replace(/[^0-9.]/g, '')) || 0;
     const subtotalNum = qtyNum * hargaNum;
 
@@ -557,6 +567,7 @@ export default function PurchaseOrderPage() {
       ukuran: inputSize.trim(),
       qty: qtyNum,
       uom: 'PCS',
+      harga_beli: hargaBeliNum,
       harga: hargaNum,
       subtotal: subtotalNum,
       image: inputImage.trim(),
@@ -569,6 +580,7 @@ export default function PurchaseOrderPage() {
     setInputModel('');
     setInputSize('');
     setInputQty('');
+    setInputHargaBeli('');
     setInputHarga('');
     setInputImage('');
   };
@@ -1060,8 +1072,9 @@ export default function PurchaseOrderPage() {
                       <th className="py-2.5 px-3 text-center">Ukuran (Size)</th>
                       <th className="py-2.5 px-3 text-center w-20">Qty</th>
                       <th className="py-2.5 px-3 text-center w-16">UOM</th>
-                      <th className="py-2.5 px-3 text-right w-28">Harga</th>
-                      <th className="py-2.5 px-3 text-right w-32">Subtotal</th>
+                      <th className="py-2.5 px-3 text-right w-24">Harga Beli</th>
+                      <th className="py-2.5 px-3 text-right w-24">Harga Jual</th>
+                      <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1088,7 +1101,10 @@ export default function PurchaseOrderPage() {
                           {it.qty}
                         </td>
                         <td className="py-2.5 px-3 text-center text-slate-600 font-mono">{it.uom}</td>
-                        <td className="py-2.5 px-3 text-right font-mono text-slate-700">
+                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                          {it.harga_beli ? formatRupiah(it.harga_beli) : '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-800">
                           {formatRupiah(it.harga)}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700">
@@ -1215,7 +1231,7 @@ export default function PurchaseOrderPage() {
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500">
-                      Kolom Excel: <strong>Tipe, Model, Size, Qty, Harga</strong>. Foto barang dapat di-upload per item langsung di tabel bawah setelah diimpor.
+                      Kolom Excel: <strong>Tipe, Model, Size, Qty, Harga Beli, Harga Jual</strong>. Foto barang dapat di-upload per item langsung di tabel bawah setelah diimpor.
                     </p>
                   </div>
                 </div>
@@ -1306,7 +1322,7 @@ export default function PurchaseOrderPage() {
                     </div>
                   </div>
 
-                  {/* Baris 2: Qty, Harga Satuan, Upload Foto, Tombol Tambah Item */}
+                  {/* Baris 2: Qty, Harga Beli, Harga Jual, Upload Foto, Tombol Tambah Item */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                     {/* Input Qty */}
                     <div className="sm:col-span-2 space-y-1">
@@ -1324,10 +1340,29 @@ export default function PurchaseOrderPage() {
                       />
                     </div>
 
-                    {/* Input Harga Satuan */}
-                    <div className="sm:col-span-3 space-y-1">
+                    {/* Input Harga Beli */}
+                    <div className="sm:col-span-2 space-y-1">
                       <label className="block text-[11px] font-bold text-slate-700">
-                        Harga Satuan (Rp) <span className="text-rose-500">*</span>
+                        Harga Beli (Rp)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={inputHargaBeli}
+                          onChange={(e) => setInputHargaBeli(e.target.value)}
+                          placeholder="0"
+                          className="w-full pl-8 pr-2 py-2 text-xs md:text-sm font-bold font-mono bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Input Harga Jual */}
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Harga Jual (Rp) <span className="text-rose-500">*</span>
                       </label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
@@ -1345,7 +1380,7 @@ export default function PurchaseOrderPage() {
                     </div>
 
                     {/* Upload Foto Barang Baru */}
-                    <div className="sm:col-span-4 space-y-1">
+                    <div className="sm:col-span-3 space-y-1">
                       <label className="block text-[11px] font-bold text-slate-700 flex items-center justify-between">
                         <span>Foto Barang Baru (Opsional)</span>
                         {inputImage && (
@@ -1439,15 +1474,16 @@ export default function PurchaseOrderPage() {
                         <th className="py-2.5 px-3">Model</th>
                         <th className="py-2.5 px-3 text-center">Size</th>
                         <th className="py-2.5 px-3 text-center w-20">Qty</th>
-                        <th className="py-2.5 px-3 text-right w-28">Harga</th>
-                        <th className="py-2.5 px-3 text-right w-32">Subtotal</th>
+                        <th className="py-2.5 px-3 text-right w-24">Harga Beli</th>
+                        <th className="py-2.5 px-3 text-right w-24">Harga Jual</th>
+                        <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
                         <th className="py-2.5 px-3 text-center w-14">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {formItems.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="py-8 text-center text-slate-400 italic">
+                          <td colSpan={10} className="py-8 text-center text-slate-400 italic">
                             Belum ada barang yang ditambahkan. Silakan gunakan formulir input di atas atau klik &quot;Upload Excel&quot; untuk mengimpor banyak item sekaligus.
                           </td>
                         </tr>
@@ -1519,8 +1555,11 @@ export default function PurchaseOrderPage() {
                             <td className="py-2 px-3 text-center font-bold text-emerald-700 font-mono">
                               {item.qty} {item.uom}
                             </td>
-                            <td className="py-2 px-3 text-right font-mono text-slate-700">
-                              {formatRupiah(item.harga)}
+                            <td className="py-2 px-3 text-right font-mono text-slate-600">
+                              {item.harga_beli ? formatRupiah(item.harga_beli) : '-'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono font-semibold text-slate-800">
+                              {formatRupiah(item.harga || 0)}
                             </td>
                             <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
                               {formatRupiah(item.subtotal)}
@@ -1548,6 +1587,7 @@ export default function PurchaseOrderPage() {
                           <td className="py-2.5 px-3 text-center font-mono text-emerald-800 text-sm">
                             {formItems.reduce((acc, it) => acc + it.qty, 0)} PCS
                           </td>
+                          <td></td>
                           <td></td>
                           <td className="py-2.5 px-3 text-right font-mono text-emerald-800 text-sm">
                             {formatRupiah(formItems.reduce((acc, it) => acc + (it.subtotal || 0), 0))}

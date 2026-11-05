@@ -23,9 +23,13 @@ export async function GET(
         r.no_id,
         r.id_transaksi,
         r.invret,
+        r.id_invoice,
         r.tgl_transaksi,
         r.id_customer,
         c.nama_customer,
+        c.alamat_lengkap,
+        c.kota,
+        c.no_telp,
         r.id_bahan,
         r.model,
         r.ukuran,
@@ -38,9 +42,17 @@ export async function GET(
         r.status_keluar,
         r.sales,
         r.akun,
-        r.id_cabang
+        r.dibuat_oleh,
+        r.dibuat_tgl,
+        r.id_cabang,
+        cb.nama_cabang,
+        cb.alamat AS cabang_alamat,
+        cb.city AS cabang_city,
+        cb.nomor_telepon AS cabang_telp,
+        cb.npwp AS cabang_npwp
        FROM tb_retur r
        LEFT JOIN tb_customer c ON r.id_customer = c.id_customer
+       LEFT JOIN tb_cabang cb ON (r.id_cabang = cb.nama_cabang OR cb.id_cabang = r.id_cabang)
        WHERE r.id_transaksi = ?
        ORDER BY r.no_id ASC`,
       [id_transaksi]
@@ -59,18 +71,31 @@ export async function GET(
       success: true,
       data: {
         id_transaksi: header.id_transaksi,
+        invret: header.invret || header.id_invoice || '',
+        id_invoice: header.id_invoice || '',
         tgl_transaksi: header.tgl_transaksi ? new Date(header.tgl_transaksi).toISOString().split('T')[0] : '',
         id_customer: header.id_customer || 'CASH',
         nama_customer: header.nama_customer || header.id_customer || 'CASH',
+        alamat_lengkap: header.alamat_lengkap || '',
+        kota: header.kota || '',
+        no_telp: header.no_telp || '',
         status_keluar: header.status_keluar, // 'd' or 's'
         keterangan: header.keterangan || '',
         sales: header.sales || '',
         akun: header.akun || 'CASH',
+        dibuat_oleh: header.dibuat_oleh || 'admin',
+        dibuat_tgl: header.dibuat_tgl || '',
         id_cabang: header.id_cabang || '',
+        cabang_nama: header.nama_cabang || header.id_cabang || 'Toko Hayami Jatinegara',
+        cabang_alamat: header.cabang_alamat || '',
+        cabang_city: header.cabang_city || '',
+        cabang_telp: header.cabang_telp || '',
+        cabang_npwp: header.cabang_npwp || '',
         items: lines.map((l) => ({
           no_id: l.no_id,
-          invret: l.invret || '',
+          invret: l.invret || l.id_invoice || '',
           id_bahan: l.id_bahan,
+          nama_bahan: l.id_bahan,
           model: l.model || '',
           ukuran: l.ukuran || '',
           qty: Number(l.qty) || 0,

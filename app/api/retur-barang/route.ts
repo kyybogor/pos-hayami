@@ -55,9 +55,20 @@ export async function GET(req: Request) {
     }
 
     if (search.trim()) {
-      whereConditions.push("(id_transaksi LIKE ? OR keterangan LIKE ? OR id_bahan LIKE ?)");
       const term = `%${search.trim()}%`;
-      params.push(term, term, term);
+      whereConditions.push(`id_transaksi IN (
+        SELECT DISTINCT id_transaksi 
+        FROM tb_retur 
+        WHERE id_transaksi LIKE ? 
+           OR keterangan LIKE ? 
+           OR id_bahan LIKE ? 
+           OR model LIKE ? 
+           OR ukuran LIKE ?
+           OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
+           OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model)) LIKE ?
+           OR invret LIKE ?
+      )`);
+      params.push(term, term, term, term, term, term, term, term);
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';

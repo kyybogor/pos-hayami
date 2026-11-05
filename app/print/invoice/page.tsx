@@ -36,11 +36,18 @@ interface ItemData {
   subtotal: number;
 }
 
+interface PaymentData {
+  no_id: number;
+  metode: string;
+  nominal: number;
+  keterangan: string;
+}
+
 function PrintInvoiceContent() {
   const searchParams = useSearchParams();
   const id_transaksi = searchParams.get('id_transaksi') || '';
 
-  const [data, setData] = useState<{ header: HeaderData; items: ItemData[] } | null>(null);
+  const [data, setData] = useState<{ header: HeaderData; items: ItemData[]; payments?: PaymentData[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,7 +101,7 @@ function PrintInvoiceContent() {
     );
   }
 
-  const { header, items } = data;
+  const { header, items, payments = [] } = data;
   const isHutang = (header.akun || '').trim().toUpperCase() === 'HUTANG';
 
   // Total calculation logic
@@ -448,7 +455,11 @@ function PrintInvoiceContent() {
             </div>
             <div className="flex justify-between">
               <span>Metode:</span>
-              <span className="font-bold">{header.nama_akun || header.akun || 'CASH'}</span>
+              <span className="font-bold">
+                {header.akun === 'SPLIT' && payments.length > 0
+                  ? `SPLIT (${payments.map((p) => p.metode).join(' + ')})`
+                  : header.nama_akun || header.akun || 'CASH'}
+              </span>
             </div>
           </div>
 
@@ -503,10 +514,19 @@ function PrintInvoiceContent() {
               <span>Total:</span>
               <span>Rp {grandTotal.toLocaleString('id-ID')}</span>
             </div>
-            <div className="flex justify-between">
-              <span>{header.nama_akun || header.akun}:</span>
-              <span>Rp {cashPaid.toLocaleString('id-ID')}</span>
-            </div>
+            {header.akun === 'SPLIT' && payments.length > 0 ? (
+              payments.map((p, pIdx) => (
+                <div key={pIdx} className="flex justify-between">
+                  <span>{p.metode}:</span>
+                  <span>Rp {Number(p.nominal).toLocaleString('id-ID')}</span>
+                </div>
+              ))
+            ) : (
+              <div className="flex justify-between">
+                <span>{header.nama_akun || header.akun}:</span>
+                <span>Rp {cashPaid.toLocaleString('id-ID')}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span>Kembalian:</span>
               <span>Rp {changeAmount.toLocaleString('id-ID')}</span>

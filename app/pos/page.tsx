@@ -14,6 +14,7 @@ import {
   Package,
   User,
   UserCheck,
+  UserPlus,
   CreditCard,
   X,
   Printer,
@@ -29,6 +30,7 @@ import {
   Calendar,
   Layers,
   Tag,
+  Split,
 } from 'lucide-react';
 import SearchableSelect, { SelectOption } from '@/components/SearchableSelect';
 
@@ -111,6 +113,10 @@ export interface PendingCartItem {
   paymentMethod?: 'CASH' | 'HUTANG';
   selectedCashAccount?: string;
   topHari?: number;
+  splitMethod1?: string;
+  splitAmount1?: number;
+  splitMethod2?: string;
+  splitAmount2?: number;
 }
 
 // Function to calculate custom price based on customer type percentage and rounding rules
@@ -224,6 +230,10 @@ export default function PosPage() {
   const [discType, setDiscType] = useState<'Rp' | '%'>('Rp');
   const [discInvoiceInput, setDiscInvoiceInput] = useState<number>(0);
   const [cashAmount, setCashAmount] = useState<number>(0);
+  const [splitMethod1, setSplitMethod1] = useState<string>('CASH');
+  const [splitAmount1, setSplitAmount1] = useState<number>(0);
+  const [splitMethod2, setSplitMethod2] = useState<string>('DEBET - BCA');
+  const [splitAmount2, setSplitAmount2] = useState<number>(0);
 
   // Helper to calculate and format Jatuh Tempo date based on TOP days
   const getJatuhTempoDate = useCallback((days: number) => {
@@ -252,8 +262,9 @@ export default function PosPage() {
   const [modalQtyDict, setModalQtyDict] = useState<Record<string, number>>({});
   const [modalError, setModalError] = useState<string | null>(null);
 
-  // Edit Customer Modal State
+  // Customer Modal State (Add / Edit)
   const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false);
+  const [customerModalMode, setCustomerModalMode] = useState<'add' | 'edit'>('edit');
   const [isSavingCustomer, setIsSavingCustomer] = useState(false);
   const [editCustomerForm, setEditCustomerForm] = useState({
     id_customer: '',
@@ -329,6 +340,10 @@ export default function PosPage() {
     setSelectedCashAccount('CASH');
     setSelectedAkun('CASH');
     setTopHari(30);
+    setSplitMethod1('CASH');
+    setSplitAmount1(0);
+    setSplitMethod2('DEBET - BCA');
+    setSplitAmount2(0);
     try {
       localStorage.removeItem('pos_active_draft');
     } catch (e) {
@@ -375,6 +390,18 @@ export default function PosPage() {
         if (typeof draft.cashAmount === 'number') {
           setCashAmount(draft.cashAmount);
         }
+        if (typeof draft.splitMethod1 === 'string') {
+          setSplitMethod1(draft.splitMethod1);
+        }
+        if (typeof draft.splitAmount1 === 'number') {
+          setSplitAmount1(draft.splitAmount1);
+        }
+        if (typeof draft.splitMethod2 === 'string') {
+          setSplitMethod2(draft.splitMethod2);
+        }
+        if (typeof draft.splitAmount2 === 'number') {
+          setSplitAmount2(draft.splitAmount2);
+        }
       }
     } catch (e) {
       console.error('Failed to parse active POS draft from localStorage', e);
@@ -412,6 +439,10 @@ export default function PosPage() {
           discType,
           discInvoiceInput,
           cashAmount,
+          splitMethod1,
+          splitAmount1,
+          splitMethod2,
+          splitAmount2,
           savedAt: new Date().toISOString(),
         };
         localStorage.setItem('pos_active_draft', JSON.stringify(draft));
@@ -432,6 +463,10 @@ export default function PosPage() {
     discType,
     discInvoiceInput,
     cashAmount,
+    splitMethod1,
+    splitAmount1,
+    splitMethod2,
+    splitAmount2,
   ]);
 
   const handleResetCart = () => {
@@ -575,6 +610,32 @@ export default function PosPage() {
     return customers.find((c) => c.id_customer === selectedCustomerId) || null;
   }, [customers, selectedCustomerId]);
 
+  const handleOpenAddCustomerModal = async () => {
+    setCustomerModalMode('add');
+    setEditCustomerForm({
+      id_customer: '',
+      nama_customer: '',
+      diskon_lusin: 0,
+      kota: '',
+      no_telp: '',
+      alamat_lengkap: '',
+      email: '',
+    });
+
+    // Auto-generate next Customer ID from master customer API
+    try {
+      const res = await fetch('/api/master-customer?generate_id=true');
+      const data = await res.json();
+      if (res.ok && data.success && data.nextId) {
+        setEditCustomerForm((prev) => ({ ...prev, id_customer: data.nextId }));
+      }
+    } catch (err) {
+      console.error('Failed to generate customer ID:', err);
+    }
+
+    setIsEditCustomerModalOpen(true);
+  };
+
   const handleOpenEditCustomerModal = (customerIdToEdit?: string) => {
     const targetId = customerIdToEdit || selectedCustomerId;
     const targetCust = customers.find((c) => c.id_customer === targetId) || selectedCustomerObj;
@@ -584,6 +645,7 @@ export default function PosPage() {
       return;
     }
 
+    setCustomerModalMode('edit');
     setEditCustomerForm({ 
       id_customer: targetCust.id_customer,
       nama_customer: targetCust.nama_customer || '',
@@ -605,29 +667,63 @@ export default function PosPage() {
 
     setIsSavingCustomer(true);
     try {
-      const res = await fetch(
-        `/api/master-customer/${encodeURIComponent(editCustomerForm.id_customer)}`,
-        {
-          method: 'PUT',
+      if (customerModalMode === 'add') {
+        const res = await fetch('/api/master-customer', {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editCustomerForm),
-        }
-      );
+          body: JSON.stringify({
+            ...editCustomerForm,
+            diskon_lusin: String(editCustomerForm.diskon_lusin || 0),
+            source_customer: ' ',
+          }),
+        });
 
-      const data = await res.json();
+        const data = await res.json();
 
-      if (res.ok && data.success) {
-        showToast('success', 'Ubah Data Customer Berhasil!');
-        setIsEditCustomerModalOpen(false);
+        if (res.ok && data.success) {
+          showToast('success', 'Customer Baru Berhasil Ditambahkan!');
+          setIsEditCustomerModalOpen(false);
 
-        // Re-fetch customers metadata so POS immediately updates customer list & discounts!
-        const custRes = await fetch('/api/pos/customers');
-        const custData = await custRes.json();
-        if (custData.success) {
-          setCustomers(custData.data || []);
+          // Re-fetch customers metadata so POS immediately updates customer list & discounts!
+          const custRes = await fetch('/api/pos/customers');
+          const custData = await custRes.json();
+          if (custData.success && custData.data) {
+            setCustomers(custData.data);
+          }
+
+          // Automatically select the newly created customer
+          const newCustId = data.id_customer || editCustomerForm.id_customer;
+          if (newCustId) {
+            setSelectedCustomerId(newCustId);
+          }
+        } else {
+          showToast('error', data.message || 'Gagal menambahkan customer baru.');
         }
       } else {
-        showToast('error', data.message || 'Gagal mengubah data customer.');
+        const res = await fetch(
+          `/api/master-customer/${encodeURIComponent(editCustomerForm.id_customer)}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(editCustomerForm),
+          }
+        );
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          showToast('success', 'Ubah Data Customer Berhasil!');
+          setIsEditCustomerModalOpen(false);
+
+          // Re-fetch customers metadata so POS immediately updates customer list & discounts!
+          const custRes = await fetch('/api/pos/customers');
+          const custData = await custRes.json();
+          if (custData.success && custData.data) {
+            setCustomers(custData.data);
+          }
+        } else {
+          showToast('error', data.message || 'Gagal mengubah data customer.');
+        }
       }
     } catch (err) {
       showToast('error', 'Terjadi kesalahan sistem saat menyimpan customer.');
@@ -677,8 +773,47 @@ export default function PosPage() {
     []
   );
 
-  // 2. Pilihan Akun Pembayaran jika metode CASH (BCA, Mandiri, BRI, Kas Tunai, dll.)
+  // 2. Pilihan Akun Pembayaran jika metode CASH (BCA, Mandiri, BRI, Kas Tunai, SPLIT, dll.)
   const cashAccountOptions: SelectOption[] = useMemo(() => {
+    return akuns
+      .filter((a) => {
+        const t = a.tipe.trim().toUpperCase();
+        return t !== 'HUTANG';
+      })
+      .map((a) => {
+        const t = a.tipe.trim().toUpperCase();
+        const isCash = t === 'CASH';
+        const isSplit = t === 'SPLIT';
+        const val = isCash
+          ? 'CASH'
+          : isSplit
+          ? 'SPLIT'
+          : a.bank && a.bank.trim() !== a.tipe.trim()
+          ? `${a.tipe.trim()} - ${a.bank.trim()}`
+          : a.tipe.trim();
+        const label = isCash
+          ? 'CASH - Kas / Tunai'
+          : isSplit
+          ? 'SPLIT - Pembayaran Terpisah (Split Pay)'
+          : a.bank && a.bank.trim() !== a.tipe.trim()
+          ? `${a.tipe.trim()} - ${a.bank.trim()}`
+          : a.tipe.trim();
+        const subLabel = isSplit
+          ? 'Kombinasi 2 metode pembayaran (cth: CASH & DEBET)'
+          : a.nama_akun && a.nama_akun.trim() !== 'CASH'
+          ? `${a.nama_akun.trim()}${a.no_akun ? ` (${a.no_akun.trim()})` : ''}`
+          : undefined;
+
+        return {
+          value: val,
+          label,
+          subLabel,
+        };
+      });
+  }, [akuns]);
+
+  // 3. Pilihan Akun Sub-Metode untuk SPLIT Payment (hanya metode riil: CASH, DEBET, TRANSFER, EDC, dll.)
+  const splitSubAccountOptions: SelectOption[] = useMemo(() => {
     return akuns
       .filter((a) => {
         const t = a.tipe.trim().toUpperCase();
@@ -708,6 +843,24 @@ export default function PosPage() {
         };
       });
   }, [akuns]);
+
+  useEffect(() => {
+    if (splitSubAccountOptions.length > 0) {
+      if (!splitMethod1 || !splitSubAccountOptions.some((o) => o.value === splitMethod1)) {
+        setSplitMethod1(splitSubAccountOptions[0].value);
+      }
+      if (
+        !splitMethod2 ||
+        !splitSubAccountOptions.some((o) => o.value === splitMethod2) ||
+        splitMethod2 === splitMethod1
+      ) {
+        const alt = splitSubAccountOptions.find(
+          (o) => o.value !== (splitMethod1 || splitSubAccountOptions[0].value)
+        );
+        if (alt) setSplitMethod2(alt.value);
+      }
+    }
+  }, [splitSubAccountOptions, splitMethod1, splitMethod2]);
 
   const custTypeOptions: SelectOption[] = useMemo(() => {
     return custTypes.map((t) => ({
@@ -1158,6 +1311,10 @@ export default function PosPage() {
       paymentMethod,
       selectedCashAccount,
       topHari,
+      splitMethod1,
+      splitAmount1,
+      splitMethod2,
+      splitAmount2,
     };
 
     const updated = [newPending, ...pendingCarts];
@@ -1194,6 +1351,10 @@ export default function PosPage() {
     setDiscType(item.discType || 'Rp');
     setDiscInvoiceInput(item.discInvoiceInput || 0);
     setCashAmount(item.cashAmount || 0);
+    if (item.splitMethod1) setSplitMethod1(item.splitMethod1);
+    if (item.splitAmount1 !== undefined) setSplitAmount1(item.splitAmount1);
+    if (item.splitMethod2) setSplitMethod2(item.splitMethod2);
+    if (item.splitAmount2 !== undefined) setSplitAmount2(item.splitAmount2);
 
     // Remove restored cart from pending list
     const updated = pendingCarts.filter((c) => c.id !== item.id);
@@ -1301,9 +1462,34 @@ export default function PosPage() {
       return;
     }
 
+    const isHutangTx = paymentMethod === 'HUTANG';
+    const isSplitTx = !isHutangTx && selectedCashAccount === 'SPLIT';
+
+    if (isSplitTx) {
+      if (!splitMethod1 || !splitMethod2) {
+        showToast('error', 'Silakan pilih kedua metode pembayaran untuk SPLIT!');
+        return;
+      }
+      if (splitMethod1 === splitMethod2) {
+        showToast('error', 'Pilihan metode pembayaran Split 1 dan Split 2 tidak boleh sama!');
+        return;
+      }
+      if (splitAmount1 <= 0 || splitAmount2 <= 0) {
+        showToast('error', 'Nominal kedua split pembayaran harus lebih besar dari Rp 0!');
+        return;
+      }
+      const totalSplit = splitAmount1 + splitAmount2;
+      if (totalSplit < grandTotal) {
+        showToast(
+          'error',
+          `Total pembayaran split (${formatCurrency(totalSplit)}) kurang dari Total Tagihan (${formatCurrency(grandTotal)})!`
+        );
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
-      const isHutangTx = paymentMethod === 'HUTANG';
       const payload = {
         cart: cart.map((i) => ({
           id_bahan: i.id_bahan,
@@ -1317,11 +1503,17 @@ export default function PosPage() {
         id_customer: selectedCustomerId,
         sales: selectedCustType?.nm_type || 'Distributor/Grosir',
         keterangan,
-        akun: isHutangTx ? 'HUTANG' : (selectedCashAccount || 'CASH'),
+        akun: isHutangTx ? 'HUTANG' : isSplitTx ? 'SPLIT' : (selectedCashAccount || 'CASH'),
         top_hari: isHutangTx ? (Number(topHari) || 30) : 0,
         disc_invoice: discInvoiceCalculated,
         diskon_lusin_total: totalDiskonCustomer,
-        cash_amount: isHutangTx ? 0 : (cashAmount || grandTotal),
+        cash_amount: isHutangTx ? 0 : isSplitTx ? (splitAmount1 + splitAmount2) : (cashAmount || grandTotal),
+        split_payments: isSplitTx
+          ? [
+              { metode: splitMethod1, nominal: splitAmount1 },
+              { metode: splitMethod2, nominal: splitAmount2 },
+            ]
+          : undefined,
       };
 
       const res = await fetch('/api/pos/checkout', {
@@ -1702,6 +1894,7 @@ export default function PosPage() {
                     value={selectedCustomerId}
                     onChange={(val) => setSelectedCustomerId(val)}
                     searchPlaceholder="Ketik nama/ID..."
+                    onAdd={handleOpenAddCustomerModal}
                     onEdit={() => handleOpenEditCustomerModal(selectedCustomerId)}
                   />
 
@@ -1735,6 +1928,13 @@ export default function PosPage() {
                       onChange={(val) => {
                         setSelectedCashAccount(val);
                         setSelectedAkun(val);
+                        if (val === 'SPLIT') {
+                          if (splitAmount1 === 0 && splitAmount2 === 0 && grandTotal > 0) {
+                            const half = Math.round(grandTotal / 2);
+                            setSplitAmount1(half);
+                            setSplitAmount2(grandTotal - half);
+                          }
+                        }
                       }}
                       searchable={false}
                     />
@@ -1777,6 +1977,139 @@ export default function PosPage() {
                     searchable={false}
                   />
                 </div>
+
+                {/* SPLIT Payment Breakdown Section */}
+                {paymentMethod === 'CASH' && selectedCashAccount === 'SPLIT' && (
+                  <div className="p-3 bg-gradient-to-br from-emerald-50/90 via-teal-50/40 to-slate-50 border border-emerald-300/80 rounded-2xl space-y-3 shadow-2xs animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between pb-2 border-b border-emerald-200/70">
+                      <div className="flex items-center space-x-1.5 text-xs font-bold text-emerald-950">
+                        <div className="p-1 bg-emerald-600 text-white rounded-md shadow-2xs">
+                          <Split className="w-3.5 h-3.5" />
+                        </div>
+                        <span>Pilihan SPLIT Pembayaran</span>
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const half = Math.round(grandTotal / 2);
+                            setSplitAmount1(half);
+                            setSplitAmount2(grandTotal - half);
+                          }}
+                          className="px-2 py-0.5 text-[10px] font-bold text-emerald-700 bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer shadow-2xs"
+                        >
+                          Bagi 50:50
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSplitAmount2(Math.max(0, grandTotal - splitAmount1));
+                          }}
+                          className="px-2 py-0.5 text-[10px] font-bold text-emerald-700 bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer shadow-2xs"
+                        >
+                          Hitung Sisa
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Split 1 */}
+                      <div className="bg-white p-2.5 rounded-xl border border-emerald-200/80 shadow-2xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                            Metode 1
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-700">
+                            {formatCurrency(splitAmount1)}
+                          </span>
+                        </div>
+                        <select
+                          value={splitMethod1}
+                          onChange={(e) => setSplitMethod1(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-800 bg-slate-50/70 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        >
+                          {splitSubAccountOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={splitAmount1 || ''}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              setSplitAmount1(val);
+                              setSplitAmount2(Math.max(0, grandTotal - val));
+                            }}
+                            placeholder="0"
+                            className="w-full pl-8 pr-2 py-1.5 text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Split 2 */}
+                      <div className="bg-white p-2.5 rounded-xl border border-emerald-200/80 shadow-2xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                            Metode 2
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-700">
+                            {formatCurrency(splitAmount2)}
+                          </span>
+                        </div>
+                        <select
+                          value={splitMethod2}
+                          onChange={(e) => setSplitMethod2(e.target.value)}
+                          className="w-full text-xs font-semibold text-slate-800 bg-slate-50/70 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        >
+                          {splitSubAccountOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={splitAmount2 || ''}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              setSplitAmount2(val);
+                            }}
+                            placeholder="0"
+                            className="w-full pl-8 pr-2 py-1.5 text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Summary & Validation Badge */}
+                    <div className="flex items-center justify-between pt-1 text-[11px]">
+                      <div className="text-slate-600 font-medium">
+                        Total Split: <span className="font-extrabold text-slate-900">{formatCurrency(splitAmount1 + splitAmount2)}</span>
+                      </div>
+                      {splitAmount1 + splitAmount2 === grandTotal ? (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold rounded-md text-[10px] border border-emerald-300">
+                          ✓ Nominal Pas
+                        </span>
+                      ) : splitAmount1 + splitAmount2 < grandTotal ? (
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold rounded-md text-[10px] border border-amber-300">
+                          Kurang: {formatCurrency(grandTotal - (splitAmount1 + splitAmount2))}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-bold rounded-md text-[10px] border border-blue-300">
+                          Lebih: {formatCurrency(splitAmount1 + splitAmount2 - grandTotal)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Keterangan */}
                 <div>
@@ -2220,15 +2553,21 @@ export default function PosPage() {
           </div>
         )}
 
-        {/* EDIT CUSTOMER MODAL (Matching Image 2) */}
+        {/* CUSTOMER MODAL (ADD / EDIT) */}
         {isEditCustomerModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
               {/* Header */}
               <div className="px-6 py-4 bg-white border-b border-slate-100 flex items-center justify-between">
                 <div className="flex items-center space-x-2 text-slate-900">
-                  <UserCheck className="w-5 h-5 text-emerald-600" />
-                  <h3 className="text-base font-bold">Ubah Data Customer</h3>
+                  {customerModalMode === 'add' ? (
+                    <UserPlus className="w-5 h-5 text-emerald-600" />
+                  ) : (
+                    <UserCheck className="w-5 h-5 text-emerald-600" />
+                  )}
+                  <h3 className="text-base font-bold">
+                    {customerModalMode === 'add' ? 'Tambah Customer Baru' : 'Ubah Data Customer'}
+                  </h3>
                 </div>
                 <button
                   type="button"
@@ -2250,6 +2589,7 @@ export default function PosPage() {
                     <input
                       type="text"
                       readOnly
+                      placeholder="Auto-Generated ID"
                       value={editCustomerForm.id_customer}
                       className="w-full text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 cursor-not-allowed focus:outline-none"
                     />
@@ -2391,7 +2731,7 @@ export default function PosPage() {
                     ) : (
                       <Save className="w-4 h-4" />
                     )}
-                    <span>Simpan</span>
+                    <span>{customerModalMode === 'add' ? 'Tambah Customer' : 'Simpan'}</span>
                   </button>
                 </div>
               </form>
@@ -2517,6 +2857,13 @@ export default function PosPage() {
                             onChange={(val) => {
                               setSelectedCashAccount(val);
                               setSelectedAkun(val);
+                              if (val === 'SPLIT') {
+                                if (splitAmount1 === 0 && splitAmount2 === 0 && grandTotal > 0) {
+                                  const half = Math.round(grandTotal / 2);
+                                  setSplitAmount1(half);
+                                  setSplitAmount2(grandTotal - half);
+                                }
+                              }
                             }}
                             searchable={false}
                           />
@@ -2552,6 +2899,139 @@ export default function PosPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* SPLIT Controls in Modal */}
+                  {paymentMethod === 'CASH' && selectedCashAccount === 'SPLIT' && (
+                    <div className="mt-3 p-3 bg-gradient-to-br from-emerald-50/90 via-teal-50/40 to-slate-50 border border-emerald-300/80 rounded-2xl space-y-3 shadow-2xs">
+                      <div className="flex items-center justify-between pb-2 border-b border-emerald-200/70">
+                        <div className="flex items-center space-x-1.5 text-xs font-bold text-emerald-950">
+                          <div className="p-1 bg-emerald-600 text-white rounded-md shadow-2xs">
+                            <Split className="w-3.5 h-3.5" />
+                          </div>
+                          <span>Pilihan SPLIT Pembayaran</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const half = Math.round(grandTotal / 2);
+                              setSplitAmount1(half);
+                              setSplitAmount2(grandTotal - half);
+                            }}
+                            className="px-2 py-0.5 text-[10px] font-bold text-emerald-700 bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer shadow-2xs"
+                          >
+                            Bagi 50:50
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSplitAmount2(Math.max(0, grandTotal - splitAmount1));
+                            }}
+                            className="px-2 py-0.5 text-[10px] font-bold text-emerald-700 bg-white border border-emerald-300 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer shadow-2xs"
+                          >
+                            Hitung Sisa
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* Split 1 */}
+                        <div className="bg-white p-2.5 rounded-xl border border-emerald-200/80 shadow-2xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Metode 1
+                            </span>
+                            <span className="text-[10px] font-bold text-emerald-700">
+                              {formatCurrency(splitAmount1)}
+                            </span>
+                          </div>
+                          <select
+                            value={splitMethod1}
+                            onChange={(e) => setSplitMethod1(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-800 bg-slate-50/70 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          >
+                            {splitSubAccountOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={splitAmount1 || ''}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                setSplitAmount1(val);
+                                setSplitAmount2(Math.max(0, grandTotal - val));
+                              }}
+                              placeholder="0"
+                              className="w-full pl-8 pr-2 py-1.5 text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Split 2 */}
+                        <div className="bg-white p-2.5 rounded-xl border border-emerald-200/80 shadow-2xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Metode 2
+                            </span>
+                            <span className="text-[10px] font-bold text-emerald-700">
+                              {formatCurrency(splitAmount2)}
+                            </span>
+                          </div>
+                          <select
+                            value={splitMethod2}
+                            onChange={(e) => setSplitMethod2(e.target.value)}
+                            className="w-full text-xs font-semibold text-slate-800 bg-slate-50/70 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          >
+                            {splitSubAccountOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-2 text-[11px] font-bold text-slate-400">Rp</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={splitAmount2 || ''}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                setSplitAmount2(val);
+                              }}
+                              placeholder="0"
+                              className="w-full pl-8 pr-2 py-1.5 text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Summary & Validation Badge */}
+                      <div className="flex items-center justify-between pt-1 text-[11px]">
+                        <div className="text-slate-600 font-medium">
+                          Total Split: <span className="font-extrabold text-slate-900">{formatCurrency(splitAmount1 + splitAmount2)}</span>
+                        </div>
+                        {splitAmount1 + splitAmount2 === grandTotal ? (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 font-bold rounded-md text-[10px] border border-emerald-300">
+                            ✓ Nominal Pas
+                          </span>
+                        ) : splitAmount1 + splitAmount2 < grandTotal ? (
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold rounded-md text-[10px] border border-amber-300">
+                            Kurang: {formatCurrency(grandTotal - (splitAmount1 + splitAmount2))}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-bold rounded-md text-[10px] border border-blue-300">
+                            Lebih: {formatCurrency(splitAmount1 + splitAmount2 - grandTotal)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Purchased Items Table */}
@@ -2834,6 +3314,10 @@ export default function PosPage() {
                   <span className="font-bold">
                     {paymentMethod === 'HUTANG' ? (
                       <span className="text-rose-600 font-extrabold">HUTANG (Tempo {topHari} Hari)</span>
+                    ) : selectedCashAccount === 'SPLIT' ? (
+                      <span className="text-emerald-700 font-extrabold">
+                        SPLIT ({splitMethod1}: {formatCurrency(splitAmount1)} + {splitMethod2}: {formatCurrency(splitAmount2)})
+                      </span>
                     ) : (
                       <span className="text-emerald-700">CASH ({selectedCashAccount})</span>
                     )}
@@ -2984,11 +3468,15 @@ export default function PosPage() {
                               <span className="text-[10px] font-bold px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md border border-slate-200">
                                 ID: {item.customerId}
                               </span>
-                              {item.paymentMethod === 'HUTANG' && (
+                              {item.paymentMethod === 'HUTANG' ? (
                                 <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded-md border border-rose-200">
                                   HUTANG
                                 </span>
-                              )}
+                              ) : item.selectedCashAccount === 'SPLIT' ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-200">
+                                  SPLIT ({item.splitMethod1} / {item.splitMethod2})
+                                </span>
+                              ) : null}
                             </div>
                             <span className="text-[11px] text-slate-400 block mt-0.5">
                               Disimpan pada: {item.timestamp}

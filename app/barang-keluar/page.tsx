@@ -24,7 +24,9 @@ import {
   AlertTriangle,
   Lock,
   Building2,
+  Package,
 } from 'lucide-react';
+import SearchableSelect, { SelectOption } from '@/components/SearchableSelect';
 
 interface BarangKeluarTx {
   id_transaksi: string;
@@ -93,6 +95,9 @@ export default function BarangKeluarPage() {
   const [tglTo, setTglTo] = useState(getTodayString());
   const [customerSearch, setCustomerSearch] = useState('');
   const [akunSearch, setAkunSearch] = useState('');
+  const [selectedBarang, setSelectedBarang] = useState('');
+  const [barangOptions, setBarangOptions] = useState<SelectOption[]>([]);
+  const [loadingBarangOptions, setLoadingBarangOptions] = useState(false);
 
   const [currentUser, setCurrentUser] = useState<{ nm_user?: string; id_user?: string; branch?: string; role?: string; tipe?: string } | null>(null);
   const isSuperAdmin = (currentUser?.role || '').toLowerCase() === 'superadmin';
@@ -107,6 +112,7 @@ export default function BarangKeluarPage() {
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
   const [detailHeader, setDetailHeader] = useState<TxDetailHeader | null>(null);
   const [detailItems, setDetailItems] = useState<TxDetailItem[]>([]);
+  const [detailPayments, setDetailPayments] = useState<any[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Void/Delete confirmation modal
@@ -232,6 +238,23 @@ export default function BarangKeluarPage() {
       }
     };
     initData();
+
+    // Fetch Barang / Model Select2 options from stock
+    const loadBarangOptions = async () => {
+      try {
+        setLoadingBarangOptions(true);
+        const res = await fetch('/api/barang-keluar?options=barang');
+        const json = await res.json();
+        if (json.success && json.options?.barang) {
+          setBarangOptions(json.options.barang);
+        }
+      } catch (e) {
+        console.error('Error load barang options:', e);
+      } finally {
+        setLoadingBarangOptions(false);
+      }
+    };
+    loadBarangOptions();
   }, []);
 
   const fetchTransactions = useCallback(async () => {
@@ -242,6 +265,7 @@ export default function BarangKeluarPage() {
       if (tglTo) params.append('tgl_to', tglTo);
       if (customerSearch) params.append('customer', customerSearch);
       if (akunSearch) params.append('akun', akunSearch);
+      if (selectedBarang) params.append('barang', selectedBarang);
       if (selectedCabang && selectedCabang !== 'ALL') params.append('cabang', selectedCabang);
 
       const res = await fetch(`/api/barang-keluar?${params.toString()}`);
@@ -260,7 +284,7 @@ export default function BarangKeluarPage() {
     } finally {
       setLoading(false);
     }
-  }, [tglFrom, tglTo, customerSearch, akunSearch, selectedCabang]);
+  }, [tglFrom, tglTo, customerSearch, akunSearch, selectedBarang, selectedCabang]);
 
   useEffect(() => {
     fetchTransactions();
@@ -271,6 +295,7 @@ export default function BarangKeluarPage() {
     setTglTo('');
     setCustomerSearch('');
     setAkunSearch('');
+    setSelectedBarang('');
     if (isSuperAdmin) {
       setSelectedCabang('ALL');
     } else if (currentUser?.branch) {
@@ -284,6 +309,7 @@ export default function BarangKeluarPage() {
     setLoadingDetail(true);
     setDetailHeader(null);
     setDetailItems([]);
+    setDetailPayments([]);
 
     try {
       const res = await fetch(`/api/barang-keluar/${encodeURIComponent(id_transaksi)}`);
@@ -292,6 +318,7 @@ export default function BarangKeluarPage() {
       if (res.ok && data.success) {
         setDetailHeader(data.data.header);
         setDetailItems(data.data.items || []);
+        setDetailPayments(data.data.payments || []);
       } else {
         showToast('error', data.message || 'Gagal mengambil detail transaksi.');
       }
@@ -485,6 +512,21 @@ export default function BarangKeluarPage() {
                 </div>
               </div>
             )}
+
+            {/* Cari Barang / Model Select2 */}
+            <div>
+              <SearchableSelect
+                label="Barang / Model"
+                icon={<Package className="w-3.5 h-3.5 text-slate-400" />}
+                options={barangOptions}
+                value={selectedBarang}
+                onChange={(val) => setSelectedBarang(val)}
+                placeholder={loadingBarangOptions ? 'Memuat...' : '- Semua Barang -'}
+                searchPlaceholder="Ketik bahan, model, atau ukuran..."
+                clearable={true}
+                allowCustom={true}
+              />
+            </div>
           </div>
 
           <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
@@ -697,7 +739,15 @@ export default function BarangKeluarPage() {
                       </div>
                       <div>
                         <span className="block text-slate-400">Pembayaran / Akun</span>
-                        <span className="font-semibold text-slate-800">{detailHeader?.nama_akun || detailHeader?.akun}</span>
+                        <span className="font-semibold text-slate-800">
+                          {detailHeader?.akun === 'SPLIT' && detailPayments.length > 0 ? (
+                            <span className="text-emerald-700 font-bold">
+                              SPLIT ({detailPayments.map((p) => `${p.metode}: ${formatCurrency(p.nominal)}`).join(' + ')})
+                            </span>
+                          ) : (
+                            detailHeader?.nama_akun || detailHeader?.akun
+                          )}
+                        </span>
                       </div>
                       <div>
                         <span className="block text-slate-400">Status</span>

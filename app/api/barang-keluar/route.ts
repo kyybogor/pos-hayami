@@ -13,10 +13,46 @@ export async function GET(request: NextRequest) {
     const userBranch = session?.branch || '';
 
     const { searchParams } = new URL(request.url);
+    const getOptions = searchParams.get('options') === 'true' || searchParams.get('options') === 'barang';
+
+    // 1. Fetch distinct barang options (id_bahan - model - ukuran) matching penjualan and retur
+    if (getOptions) {
+      const [stockRows] = await pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT TRIM(id_bahan) as id_bahan, TRIM(model) as model, TRIM(ukuran) as ukuran 
+         FROM tb_barang_keluar 
+         WHERE id_bahan IS NOT NULL AND TRIM(id_bahan) != ''
+         UNION
+         SELECT DISTINCT TRIM(id_bahan) as id_bahan, TRIM(model) as model, TRIM(ukuran) as ukuran 
+         FROM tb_retur 
+         WHERE id_bahan IS NOT NULL AND TRIM(id_bahan) != ''
+         ORDER BY id_bahan ASC, model ASC, ukuran ASC`
+      );
+
+      const barangOptions = stockRows.map((r) => {
+        const parts = [r.id_bahan, r.model, r.ukuran].filter((x) => x && String(x).trim() !== '');
+        const label = parts.join(' - ');
+        return {
+          value: label,
+          label: label,
+          id_bahan: r.id_bahan,
+          model: r.model,
+          ukuran: r.ukuran,
+        };
+      });
+
+      return NextResponse.json({
+        success: true,
+        options: {
+          barang: barangOptions,
+        },
+      });
+    }
+
     const tglFrom = searchParams.get('tgl_from') || '';
     const tglTo = searchParams.get('tgl_to') || '';
     const customer = searchParams.get('customer') || '';
     const akun = searchParams.get('akun') || '';
+    const barang = searchParams.get('barang') || '';
     const cabangParam = searchParams.get('cabang') || '';
 
     let effectiveBranch = userBranch;
@@ -41,8 +77,8 @@ export async function GET(request: NextRequest) {
     } else if (tglTo) {
       whereClause += ` AND DATE_FORMAT(a.tgl_transaksi, '%Y-%m-%d') <= ?`;
       params.push(tglTo);
-    } else {
-      // Default: Display only TODAY'S transactions (CURDATE)
+    } else if (!customer && !akun && !barang) {
+      // Default: Display only TODAY'S transactions (CURDATE) when no specific filter is supplied
       whereClause += ` AND DATE_FORMAT(a.tgl_transaksi, '%Y-%m-%d') = CURDATE()`;
     }
 
@@ -54,6 +90,41 @@ export async function GET(request: NextRequest) {
     if (akun) {
       whereClause += ` AND a.akun LIKE ?`;
       params.push(`%${akun}%`);
+    }
+
+    if (barang.trim()) {
+      const parts = barang.split(' - ').map((s) => s.trim());
+      if (parts.length >= 3) {
+        const idBahan = parts[0];
+        const modelStr = parts[1];
+        const ukuranStr = parts.slice(2).join(' - ');
+        whereClause += ` AND a.id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_barang_keluar 
+          WHERE (id_bahan = ? AND model = ? AND ukuran = ?)
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
+        )`;
+        params.push(idBahan, modelStr, ukuranStr, `%${barang.trim()}%`);
+      } else if (parts.length === 2) {
+        whereClause += ` AND a.id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_barang_keluar 
+          WHERE (id_bahan = ? AND model = ?)
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model)) LIKE ?
+        )`;
+        params.push(parts[0], parts[1], `%${barang.trim()}%`);
+      } else {
+        const term = `%${barang.trim()}%`;
+        whereClause += ` AND a.id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_barang_keluar 
+          WHERE id_bahan LIKE ? 
+             OR model LIKE ? 
+             OR ukuran LIKE ?
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
+        )`;
+        params.push(term, term, term, term);
+      }
     }
 
     const query = `

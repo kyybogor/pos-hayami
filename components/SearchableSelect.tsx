@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, ReactNode } from 'react';
-import { Search, ChevronDown, Check, X, Edit3 } from 'lucide-react';
+import { Search, ChevronDown, Check, X, Edit3, Plus } from 'lucide-react';
 
 export interface SelectOption {
   value: string;
@@ -21,6 +21,7 @@ interface SearchableSelectProps {
   searchable?: boolean;
   allowCustom?: boolean;
   size?: 'sm' | 'md';
+  onAdd?: () => void;
   onEdit?: () => void;
   clearable?: boolean;
 }
@@ -37,6 +38,7 @@ export default function SearchableSelect({
   searchable = true,
   allowCustom = false,
   size = 'md',
+  onAdd,
   onEdit,
   clearable = true,
 }: SearchableSelectProps) {
@@ -96,20 +98,36 @@ export default function SearchableSelect({
             {icon}
             <span>{label}</span>
           </label>
-          {onEdit && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-100/60 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200/80 flex items-center space-x-1 cursor-pointer transition-all"
-              title="Edit Customer"
-            >
-              <Edit3 className="w-2.5 h-2.5 text-emerald-600" />
-              <span>Edit</span>
-            </button>
-          )}
+          <div className="flex items-center space-x-1.5">
+            {onAdd && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAdd();
+                }}
+                className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-100/60 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200/80 flex items-center space-x-1 cursor-pointer transition-all"
+                title="Tambah Customer Baru"
+              >
+                <Plus className="w-2.5 h-2.5 text-emerald-600" />
+                <span>Tambah</span>
+              </button>
+            )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+                className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-100/60 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200/80 flex items-center space-x-1 cursor-pointer transition-all"
+                title="Edit Customer"
+              >
+                <Edit3 className="w-2.5 h-2.5 text-emerald-600" />
+                <span>Edit</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -206,33 +224,40 @@ export default function SearchableSelect({
                 {allowCustom ? 'Tekan opsi di atas untuk memakai nilai baru' : 'Tidak ada data yang cocok'}
               </div>
             ) : (
-              filteredOptions.map((opt, idx) => {
-                const isSelected = opt.value === value;
-                return (
-                  <button
-                    key={`${opt.value}-${idx}`}
-                    type="button"
-                    onClick={() => handleSelect(opt.value)}
-                    className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-xl transition-colors text-left cursor-pointer ${
-                      isSelected
-                        ? 'bg-emerald-50 text-emerald-800 font-bold'
-                        : 'hover:bg-slate-50 text-slate-700 font-medium'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1.5 truncate pr-2">
-                      <span className={isSelected ? 'text-emerald-700 font-bold shrink-0' : 'font-semibold text-slate-800 shrink-0'}>
-                        {opt.label || opt.value}
-                      </span>
-                      {opt.subLabel && (
-                        <span className="text-slate-400 text-[11px] font-normal truncate">
-                          | {opt.subLabel}
+              <>
+                {filteredOptions.slice(0, 100).map((opt, idx) => {
+                  const isSelected = opt.value === value;
+                  return (
+                    <button
+                      key={`${opt.value}-${idx}`}
+                      type="button"
+                      onClick={() => handleSelect(opt.value)}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-xl transition-colors text-left cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-50 text-emerald-800 font-bold'
+                          : 'hover:bg-slate-50 text-slate-700 font-medium'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-1.5 truncate pr-2">
+                        <span className={isSelected ? 'text-emerald-700 font-bold shrink-0' : 'font-semibold text-slate-800 shrink-0'}>
+                          {opt.label || opt.value}
                         </span>
-                      )}
-                    </div>
-                    {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                  </button>
-                );
-              })
+                        {opt.subLabel && (
+                          <span className="text-slate-400 text-[11px] font-normal truncate">
+                            | {opt.subLabel}
+                          </span>
+                        )}
+                      </div>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                    </button>
+                  );
+                })}
+                {filteredOptions.length > 100 && (
+                  <div className="py-2 px-3 text-center text-[10px] text-slate-400 italic bg-slate-50 rounded-lg my-1">
+                    Menampilkan 100 dari {filteredOptions.length.toLocaleString('id-ID')} data. Ketik untuk mempersempit pencarian...
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

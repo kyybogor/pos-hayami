@@ -76,11 +76,18 @@ export async function GET(
       subtotal: r.subtotal,
     }));
 
+    // Query split / payment records from tb_pembayaran
+    const [payments] = await pool.query<RowDataPacket[]>(
+      `SELECT no_id, metode, nominal, keterangan, dibuat_tgl FROM tb_pembayaran WHERE id_pembayaran = ? ORDER BY no_id ASC`,
+      [id_transaksi]
+    );
+
     return NextResponse.json({
       success: true,
       data: {
         header,
         items,
+        payments,
       },
     });
   } catch (error: any) {

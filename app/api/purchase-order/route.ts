@@ -216,7 +216,7 @@ export async function GET(req: Request) {
     const transactions = await Promise.all(
       headerRows.map(async (h) => {
         const [itemRows] = await poolLocal.query<RowDataPacket[]>(
-          `SELECT no_id, id_product, model, ukuran, qty, uom, harga, subtotal, image 
+          `SELECT no_id, id_product, model, ukuran, qty, uom, harga_beli, harga, subtotal, image 
            FROM tb_barang_masuk 
            WHERE id_transaksi = ?
            ORDER BY no_id ASC`,
@@ -242,6 +242,7 @@ export async function GET(req: Request) {
             ukuran: it.ukuran,
             qty: Number(it.qty) || 0,
             uom: it.uom || 'PCS',
+            harga_beli: Number(it.harga_beli) || 0,
             harga: Number(it.harga) || 0,
             subtotal: Number(it.subtotal) || (Number(it.qty) * Number(it.harga)) || 0,
             image: it.image || '',
@@ -304,6 +305,7 @@ export async function POST(req: Request) {
     for (const item of items) {
       const noId = formatNoId(currentNoIdSeq++, tglDate);
       const qtyNum = Number(item.qty) || 0;
+      const hargaBeliNum = Number(item.harga_beli) || 0;
       const hargaNum = Number(item.harga) || 0;
       const subtotalNum = Number(item.subtotal) || (qtyNum * hargaNum);
 
@@ -312,8 +314,8 @@ export async function POST(req: Request) {
       await poolLocal.query(
         `INSERT INTO tb_barang_masuk (
           no_id, id_transaksi, tgl_transaksi, id_supplier, id_product, model, ukuran, 
-          qty, uom, harga, subtotal, total, keterangan, status, jenis, id_cabang, by_user_pajak, status_lunas, image
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          qty, uom, harga_beli, harga, subtotal, total, keterangan, status, jenis, id_cabang, by_user_pajak, status_lunas, image
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           noId,
           id_transaksi,
@@ -324,6 +326,7 @@ export async function POST(req: Request) {
           item.ukuran || '', // Size
           qtyNum,
           item.uom || 'PCS',
+          hargaBeliNum,
           hargaNum,
           subtotalNum,
           subtotalNum,

@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       cash_amount = 0,
       top_hari = 0,
       top = 0,
+      split_payments = [],
     } = body;
 
     const cartItems: CartItemInput[] = cart || [];
@@ -181,10 +182,11 @@ export async function POST(request: NextRequest) {
 
       const upperAkun = String(akun || 'CASH').trim().toUpperCase();
       const isHutang = upperAkun === 'HUTANG' || upperAkun.startsWith('HUTANG');
+      const isSplit = upperAkun === 'SPLIT';
       const statusTx = isHutang ? 'Belum Lunas' : 'Lunas';
       const sisaBayar = isHutang ? 0 : grandTotalCalculated;
       const cashVal = isHutang ? 0 : (cash_amount || grandTotalCalculated);
-      const akunValue = isHutang ? 'HUTANG' : akun;
+      const akunValue = isHutang ? 'HUTANG' : isSplit ? 'SPLIT' : akun;
 
       // Extract TOP days as integer number (saved into jatuh_tempo column)
       const parsedTop = parseInt(String(top_hari || top || 0), 10);
@@ -338,19 +340,41 @@ export async function POST(request: NextRequest) {
 
       // 4. INSERT PAYMENT ENTRY (if not HUTANG)
       if (!isHutang) {
-        await connection.query(
-          `INSERT INTO tb_pembayaran (
-            no_id, id_pembayaran, tgl_bayar, metode, nominal, keterangan, dibuat_oleh, dibuat_tgl, id_cabang
-          ) VALUES ('', ?, CURDATE(), ?, ?, ?, ?, NOW(), ?)`,
-          [
-            id_transaksi,
-            akun,
-            cash_amount || grandTotalCalculated,
-            `Pembayaran POS Transaksi ${id_transaksi} (${id_customer})`,
-            createdBy,
-            userGrup,
-          ]
-        );
+        if (isSplit && Array.isArray(split_payments) && split_payments.length > 0) {
+          for (const sp of split_payments) {
+            const spNominal = Number(sp?.nominal) || 0;
+            const spMetode = String(sp?.metode || 'CASH').trim();
+            if (spNominal > 0) {
+              await connection.query(
+                `INSERT INTO tb_pembayaran (
+                  id_pembayaran, tgl_bayar, metode, nominal, keterangan, dibuat_oleh, dibuat_tgl, id_cabang, sts
+                ) VALUES (?, CURDATE(), ?, ?, ?, ?, NOW(), ?, 1)`,
+                [
+                  id_transaksi,
+                  spMetode,
+                  spNominal,
+                  `Split pembayaran ${spMetode} ${id_transaksi}`,
+                  createdBy,
+                  userGrup,
+                ]
+              );
+            }
+          }
+        } else {
+          await connection.query(
+            `INSERT INTO tb_pembayaran (
+              id_pembayaran, tgl_bayar, metode, nominal, keterangan, dibuat_oleh, dibuat_tgl, id_cabang, sts
+            ) VALUES (?, CURDATE(), ?, ?, ?, ?, NOW(), ?, 1)`,
+            [
+              id_transaksi,
+              akun,
+              cash_amount || grandTotalCalculated,
+              `Pembayaran POS Transaksi ${id_transaksi} (${id_customer})`,
+              createdBy,
+              userGrup,
+            ]
+          );
+        }
       }
 
       await connection.commit();
