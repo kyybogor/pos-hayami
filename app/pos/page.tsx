@@ -169,7 +169,7 @@ export default function PosPage() {
         return existingImg;
       }
 
-      // 2. Cek API online jika ada
+      // 2. Cek API online jika ada di mapping dictionary
       if (idBahan && model) {
         const key = `${idBahan.trim().toLowerCase()}|||${model.trim().toLowerCase()}`;
         if (productImagesMap[key]) {
@@ -177,12 +177,14 @@ export default function PosPage() {
         }
       }
 
-      // 3. Fallback jika ada existingImg lainnya (misal URL http atau path relatif)
+      // 3. Fallback jika ada existingImg lainnya (misal URL http, dist/img/gambar, atau path relatif)
       if (existingImg && existingImg.trim() !== '') {
-        if (existingImg.startsWith('http') || existingImg.startsWith('/')) {
-          return existingImg;
-        }
-        return `/${existingImg}`;
+        return `/api/pos/image-proxy?img=${encodeURIComponent(existingImg)}&label=${encodeURIComponent(idBahan)}`;
+      }
+
+      // 4. Default fallback: coba proxy nama bahan & model
+      if (idBahan && model) {
+        return `/api/pos/image-proxy?img=${encodeURIComponent(`img/${idBahan}-${model}.jpg`)}&label=${encodeURIComponent(idBahan)}`;
       }
 
       return '';
@@ -901,7 +903,9 @@ export default function PosPage() {
           fetch('/api/pos/customers'),
           fetch('/api/pos/akuns'),
           fetch('/api/cust-type'),
-          fetch('https://new-program.hayami.id/api/product-images').catch(() => null),
+          fetch('/api/pos/product-images').catch(() =>
+            fetch('https://new-program.hayami.id/api/product-images?domain=https://hayami.id/apps/erp').catch(() => null)
+          ),
         ]);
         const [custData, akunData, custTypeData] = await Promise.all([
           custRes.json(),
@@ -926,13 +930,22 @@ export default function PosPage() {
         }
 
         if (imgRes && imgRes.ok) {
-          const imgData = await imgRes.json();
-          if (Array.isArray(imgData)) {
+          const imgJson = await imgRes.json();
+          // Support both internal API format ({ success: true, data: { ... } }) and raw array format
+          if (imgJson.success && imgJson.data) {
+            setProductImagesMap(imgJson.data);
+            try {
+              localStorage.setItem('pos_product_images_cache', JSON.stringify(imgJson.data));
+            } catch (e) {
+              console.warn('LocalStorage limit or error saving product images cache', e);
+            }
+          } else if (Array.isArray(imgJson)) {
             const imgMap: Record<string, string> = {};
-            imgData.forEach((item: { tipe?: string; gambar?: string; url?: string }) => {
-              if (item.tipe && item.gambar && item.url) {
+            imgJson.forEach((item: { tipe?: string; gambar?: string; url?: string; img?: string }) => {
+              if (item.tipe && item.gambar) {
                 const key = `${item.tipe.trim().toLowerCase()}|||${item.gambar.trim().toLowerCase()}`;
-                imgMap[key] = item.url;
+                const targetImg = item.img || item.url || '';
+                imgMap[key] = `/api/pos/image-proxy?img=${encodeURIComponent(targetImg)}&label=${encodeURIComponent(item.tipe)}`;
               }
             });
             setProductImagesMap(imgMap);
@@ -1057,6 +1070,99 @@ export default function PosPage() {
       return () => clearTimeout(timer);
     }
   }, [searchQuery, handleBarcodeScan]);
+
+  // Global Barcode Scanner Interceptor & Chrome Downloads (Ctrl+J / LF) Blocker
+  useEffect(() => {
+    let barcodeBuffer = '';
+    let lastKeyTime = 0;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const isKeyJ = e.key === 'j' || e.key === 'J' || e.keyCode === 74 || e.which === 74;
+      const isLF = e.key === 'Linefeed' || e.keyCode === 10 || e.which === 10;
+
+      // 1. Prevent Chrome from opening the Downloads manager on Ctrl+J or Linefeed from barcode scanners
+      if ((isCtrlOrMeta && isKeyJ) || isLF) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof (e as any).stopImmediatePropagation === 'function') {
+          (e as any).stopImmediatePropagation();
+        }
+
+        // If scanner buffered characters, trigger scan immediately
+        if (barcodeBuffer.trim().length >= 3) {
+          const codeToProcess = barcodeBuffer.trim();
+          barcodeBuffer = '';
+          setSearchQuery(codeToProcess);
+          handleBarcodeScan(codeToProcess);
+        } else if (searchQuery.trim().length >= 3) {
+          handleBarcodeScan();
+        }
+        return;
+      }
+
+      // 2. Barcode Scanner rapid keystroke detection (< 50ms per keypress)
+      const now = Date.now();
+      const isFast = now - lastKeyTime < 50;
+      lastKeyTime = now;
+
+      if (e.key === 'Enter') {
+        if (barcodeBuffer.trim().length >= 3) {
+          e.preventDefault();
+          e.stopPropagation();
+          const codeToProcess = barcodeBuffer.trim();
+          barcodeBuffer = '';
+          setSearchQuery(codeToProcess);
+          handleBarcodeScan(codeToProcess);
+          return;
+        }
+        barcodeBuffer = '';
+        return;
+      }
+
+      // If printable character
+      if (e.key && e.key.length === 1 && !isCtrlOrMeta && !e.altKey) {
+        const target = e.target as HTMLElement | null;
+        const isInput =
+          target &&
+          (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || (target as any).isContentEditable);
+
+        // If user is typing in another input (like customer or split modal), don't hijack unless it's rapid scanner burst
+        if (isInput && !isFast) {
+          barcodeBuffer = '';
+        } else {
+          // Rapid typing from scanner or scanning when not focused on an input
+          if (!isFast && barcodeBuffer.length > 0) {
+            barcodeBuffer = '';
+          }
+          barcodeBuffer += e.key;
+        }
+      }
+    };
+
+    const blockCtrlJDirect = (e: KeyboardEvent) => {
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const isKeyJ = e.key === 'j' || e.key === 'J' || e.keyCode === 74 || e.which === 74;
+      const isLF = e.key === 'Linefeed' || e.keyCode === 10 || e.which === 10;
+      if ((isCtrlOrMeta && isKeyJ) || isLF) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof (e as any).stopImmediatePropagation === 'function') {
+          (e as any).stopImmediatePropagation();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
+    window.addEventListener('keypress', blockCtrlJDirect, { capture: true });
+    window.addEventListener('keyup', blockCtrlJDirect, { capture: true });
+
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true });
+      window.removeEventListener('keypress', blockCtrlJDirect, { capture: true });
+      window.removeEventListener('keyup', blockCtrlJDirect, { capture: true });
+    };
+  }, [handleBarcodeScan, searchQuery]);
 
   // Infinite Scroll Handler when user reaches bottom of catalog
   const handleCatalogScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -1629,8 +1735,13 @@ export default function PosPage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+                  const isKeyJ = e.key === 'j' || e.key === 'J' || e.keyCode === 74 || e.which === 74;
+                  const isLF = e.key === 'Linefeed' || e.keyCode === 10 || e.which === 10;
+
+                  if (e.key === 'Enter' || (isCtrlOrMeta && isKeyJ) || isLF) {
                     e.preventDefault();
+                    e.stopPropagation();
                     handleBarcodeScan();
                   }
                 }}
@@ -1780,10 +1891,25 @@ export default function PosPage() {
                               <img
                                 src={imgUrl}
                                 alt={`${p.id_bahan} ${p.model}`}
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  const parent = e.currentTarget.parentElement;
+                                  if (parent) {
+                                    const fallback = parent.querySelector('.card-img-fallback');
+                                    if (fallback) (fallback as HTMLElement).style.display = 'flex';
+                                  }
+                                }}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                               />
+                              <div className="card-img-fallback hidden flex-col items-center justify-center text-slate-300 w-full h-full">
+                                <Package className="w-9 h-9 mb-1 text-slate-300" />
+                                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                                  Hayami
+                                </span>
+                              </div>
                               {/* Hover Zoom Icon Badge */}
-                              <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover/img:opacity-100 transition-opacity duration-150 flex items-center justify-center">
+                              <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover/img:opacity-100 transition-opacity duration-150 flex items-center justify-center pointer-events-none">
                                 <div className="p-2 bg-white/90 text-slate-800 rounded-xl shadow-md flex items-center space-x-1 text-[11px] font-bold">
                                   <ZoomIn className="w-4 h-4 text-emerald-600" />
                                   <span>Perbesar</span>
@@ -1803,6 +1929,7 @@ export default function PosPage() {
                           {imgUrl && (
                             <button
                               type="button"
+                              tabIndex={-1}
                               title="Download Gambar"
                               aria-label="Download Gambar"
                               onClick={(e) => {
@@ -2361,6 +2488,9 @@ export default function PosPage() {
                       <img
                         src={modalImgUrl}
                         alt={selectedProduct?.id_bahan}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
                         className="max-h-48 object-contain group-hover/modalimg:scale-105 transition-transform duration-200"
                       />
                       <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover/modalimg:opacity-100 transition-opacity duration-150 flex items-center justify-center">
@@ -3594,8 +3724,21 @@ export default function PosPage() {
                 <img
                   src={previewImageModal.url}
                   alt={`${previewImageModal.title} ${previewImageModal.model}`}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const parent = e.currentTarget.parentElement;
+                    if (parent) {
+                      const fallback = parent.querySelector('.preview-fallback');
+                      if (fallback) (fallback as HTMLElement).style.display = 'flex';
+                    }
+                  }}
                   className="max-h-[70vh] w-auto max-w-full object-contain rounded-lg shadow-lg"
                 />
+                <div className="preview-fallback hidden flex-col items-center justify-center text-slate-400 p-8 text-center">
+                  <Package className="w-16 h-16 mb-2 text-slate-500" />
+                  <span className="text-sm font-bold text-slate-300">Gambar Tidak Tersedia</span>
+                  <span className="text-xs text-slate-500 mt-1">File gambar belum diupload di server.</span>
+                </div>
               </div>
 
               {/* Footer info bar */}

@@ -24,6 +24,7 @@
 .DS_Store
 *.pem
 *.zip
+/public/cache/
 
 # debug
 npm-debug.log*

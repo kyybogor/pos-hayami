@@ -14,10 +14,39 @@ export async function GET(request: NextRequest) {
       ? new URL(imageUrl, request.url).toString()
       : imageUrl;
 
-    const imageRes = await fetch(fullImageUrl);
+    let imageRes = await fetch(fullImageUrl).catch(() => null);
 
-    if (!imageRes.ok) {
-      return NextResponse.json({ error: 'Failed to fetch image from source' }, { status: imageRes.status });
+    // If direct fetch fails or 404, try proxying or alternative Hayami domains
+    if (!imageRes || !imageRes.ok) {
+      const cleanPath = imageUrl
+        .replace(/^https?:\/\/[^\/]+\//i, '')
+        .replace(/^[\\\/]+/, '');
+
+      const altCandidates = [
+        new URL(`/api/pos/image-proxy?img=${encodeURIComponent(cleanPath)}`, request.url).toString(),
+        `https://hayami.id/apps/erp/${encodeURI(cleanPath)}`,
+        `https://hayami.id/apps/erp/img/${encodeURI(cleanPath)}`,
+        `https://new-program.hayami.id/${encodeURI(cleanPath)}`,
+      ];
+
+      for (const alt of altCandidates) {
+        try {
+          const res = await fetch(alt, { signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            imageRes = res;
+            break;
+          }
+        } catch {
+          // Continue
+        }
+      }
+    }
+
+    if (!imageRes || !imageRes.ok) {
+      return NextResponse.json(
+        { error: 'Failed to fetch image from source' },
+        { status: imageRes ? imageRes.status : 404 }
+      );
     }
 
     const contentType = imageRes.headers.get('content-type') || 'image/jpeg';
