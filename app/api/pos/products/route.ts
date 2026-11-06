@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 
-// Ensure tb_location_stock table exists so LEFT JOIN does not fail on new database
-async function ensureLocationStockTable() {
+// 1. Ensure table runs at most once in memory per server instance (prevents DDL lock overhead on every request)
+let isLocationStockEnsured = false;
+async function maybeEnsureLocationStockTable() {
+  if (isLocationStockEnsured) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tb_location_stock (
@@ -22,21 +24,40 @@ async function ensureLocationStockTable() {
         INDEX idx_nama_stock (nama_stock)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    isLocationStockEnsured = true;
   } catch {
-    // Ignore error if table exists
+    isLocationStockEnsured = true;
   }
 }
 
+// 2. High-speed In-Memory Cache for filter options & initial catalog
+interface CacheEntry {
+  data: any;
+  timestamp: number;
+}
+const cacheStore = new Map<string, CacheEntry>();
+const CACHE_TTL_CATALOG = 30 * 1000; // 30 seconds for initial catalog page
+const CACHE_TTL_OPTIONS = 5 * 60 * 1000; // 5 minutes for dropdown options
+let cachedTotalCount: { value: number; timestamp: number } | null = null;
+
 export async function GET(request: NextRequest) {
   try {
-    await ensureLocationStockTable();
+    await maybeEnsureLocationStockTable();
 
     const { searchParams } = new URL(request.url);
     const getOptions = searchParams.get('options') === 'true';
 
-    // 1. Fetch options for Select2 dropdowns (Tipe & Model)
+    // 1. Fetch options for Select2 dropdowns (Tipe & Model) with memory cache
     if (getOptions) {
       const selectedTipe = searchParams.get('tipe') || '';
+      const cacheKey = `opt_${selectedTipe}`;
+      const cached = cacheStore.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_OPTIONS) {
+        return NextResponse.json(cached.data, {
+          headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
+        });
+      }
+
       const [[tipeRows], [modelRows]] = await Promise.all([
         pool.query<RowDataPacket[]>(
           'SELECT DISTINCT id_bahan FROM tb_stock WHERE id_bahan IS NOT NULL AND id_bahan != "" ORDER BY id_bahan ASC'
@@ -53,12 +74,18 @@ export async function GET(request: NextRequest) {
             ),
       ]);
 
-      return NextResponse.json({
+      const responseData = {
         success: true,
         options: {
           tipes: tipeRows.map((r) => r.id_bahan),
           models: modelRows.map((r) => r.model),
         },
+      };
+
+      cacheStore.set(cacheKey, { data: responseData, timestamp: Date.now() });
+
+      return NextResponse.json(responseData, {
+        headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
       });
     }
 
@@ -66,7 +93,19 @@ export async function GET(request: NextRequest) {
     const tipe = searchParams.get('tipe') || '';
     const model = searchParams.get('model') || '';
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.max(1, parseInt(searchParams.get('limit') || '20', 10));
+    const limit = Math.max(1, parseInt(searchParams.get('limit') || '24', 10));
+
+    // Check In-Memory Cache for initial page loads (no search/filter)
+    const isDefaultCatalog = !search.trim() && !tipe.trim() && !model.trim();
+    const catalogCacheKey = `cat_${page}_${limit}`;
+    if (isDefaultCatalog) {
+      const cached = cacheStore.get(catalogCacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_CATALOG) {
+        return NextResponse.json(cached.data, {
+          headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' },
+        });
+      }
+    }
 
     const conditions: string[] = [];
     const params: any[] = [];
@@ -103,15 +142,24 @@ export async function GET(request: NextRequest) {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // 1. Get total count of distinct (id_bahan, model) matching search filter
-    const countQuery = `
-      SELECT COUNT(DISTINCT s.id_bahan, s.model) AS total_count
-      FROM tb_stock s
-      ${whereClause}
-    `;
-    const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
-    const totalCount = Number(countRows[0]?.total_count || 0);
+    let totalCount = 0;
+    if (isDefaultCatalog && cachedTotalCount && Date.now() - cachedTotalCount.timestamp < 60000) {
+      totalCount = cachedTotalCount.value;
+    } else {
+      const countQuery = `
+        SELECT COUNT(DISTINCT s.id_bahan, s.model) AS total_count
+        FROM tb_stock s
+        ${whereClause}
+      `;
+      const [countRows] = await pool.query<RowDataPacket[]>(countQuery, params);
+      totalCount = Number(countRows[0]?.total_count || 0);
+      if (isDefaultCatalog) {
+        cachedTotalCount = { value: totalCount, timestamp: Date.now() };
+      }
+    }
 
     // 2. Fetch page of models (Available stock = tb_stock.stock - tb_location_stock.qty - stock_reserve)
+    // ULTRA-OPTIMIZED: Avoid expensive correlated subquery inside GROUP BY for all 6000 items!
     const offset = (page - 1) * limit;
     const modelQuery = `
       SELECT 
@@ -126,20 +174,7 @@ export async function GET(request: NextRequest) {
         SELECT 
           s.id_bahan,
           s.model,
-          COALESCE(
-            NULLIF(MAX(s.image), ''),
-            (
-              SELECT bm.image 
-              FROM tb_barang_masuk bm 
-              WHERE (bm.id_product = s.id_bahan OR bm.id_product = (SELECT b2.nama_bahan FROM tb_bahan b2 WHERE b2.id_bahan = s.id_bahan LIMIT 1))
-                AND bm.model = s.model 
-                AND bm.image IS NOT NULL 
-                AND bm.image != '' 
-              ORDER BY bm.no_id DESC 
-              LIMIT 1
-            ),
-            ''
-          ) AS image,
+          COALESCE(NULLIF(MAX(s.image), ''), '') AS image,
           MAX(s.uom) AS uom,
           SUM(GREATEST(0, s.stock - COALESCE(loc.loc_qty, 0) - COALESCE(s.stock_reserve, 0))) AS total_stock,
           MAX(s.harga) AS max_harga_lusin
@@ -161,17 +196,41 @@ export async function GET(request: NextRequest) {
     const [models] = await pool.query<RowDataPacket[]>(modelQuery, modelParams);
 
     if (models.length === 0) {
-      return NextResponse.json({
+      const emptyResult = {
         success: true,
         data: [],
         page,
         limit,
         total: totalCount,
         hasMore: false,
-      });
+      };
+      return NextResponse.json(emptyResult);
     }
 
-    // 3. Fetch variants for these models (Subtract location stock and stock_reserve)
+    // 3. Fallback image lookup ONLY for the 24 models that don't have an image in tb_stock
+    const emptyImgModels = models.filter((m) => !m.image || m.image.trim() === '');
+    if (emptyImgModels.length > 0) {
+      const pairs = emptyImgModels.map((m) => [m.id_bahan, m.model]);
+      const [bmRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id_product, model, image 
+         FROM tb_barang_masuk 
+         WHERE (id_product, model) IN (?) AND image IS NOT NULL AND image != ''
+         ORDER BY no_id DESC`,
+        [pairs]
+      );
+      const bmMap = new Map<string, string>();
+      for (const r of bmRows) {
+        const key = `${r.id_product}|||${r.model}`;
+        if (!bmMap.has(key)) bmMap.set(key, r.image);
+      }
+      for (const m of models) {
+        if (!m.image) {
+          m.image = bmMap.get(`${m.id_bahan}|||${m.model}`) || '';
+        }
+      }
+    }
+
+    // 4. Fetch variants for these models (Subtract location stock and stock_reserve)
     const pairs = models.map((m) => [m.id_bahan, m.model]);
     const [variantRows] = await pool.query<RowDataPacket[]>(
       `SELECT 
@@ -252,13 +311,23 @@ export async function GET(request: NextRequest) {
 
     const hasMore = offset + limit < totalCount;
 
-    return NextResponse.json({
+    const responsePayload = {
       success: true,
       data: products,
       page,
       limit,
       total: totalCount,
       hasMore,
+    };
+
+    if (isDefaultCatalog) {
+      cacheStore.set(catalogCacheKey, { data: responsePayload, timestamp: Date.now() });
+    }
+
+    return NextResponse.json(responsePayload, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
+      },
     });
   } catch (error: any) {
     console.error('Error fetching POS products:', error);

@@ -372,18 +372,34 @@ function PrintInvoiceContent() {
           margin: 0mm;
         }
         @media print {
-          body {
+          html, body {
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
-            background: #ffffff !important;
+          }
+          .thermal-wrapper {
+            padding: 0 !important;
+            margin: 0 !important;
+            display: flex !important;
+            justify-content: center !important;
+            width: 100% !important;
           }
           .thermal-sheet {
             width: 100% !important;
-            max-width: 100% !important;
+            max-width: 58mm !important;
+            box-sizing: border-box !important;
             box-shadow: none !important;
             border: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
+            padding: 3mm 5mm 8mm 5mm !important;
+            margin: 0 auto !important;
+            font-size: 10px !important;
+            line-height: 1.3 !important;
+          }
+          .thermal-sheet * {
+            box-sizing: border-box !important;
           }
         }
       `}</style>
@@ -412,8 +428,8 @@ function PrintInvoiceContent() {
       </div>
 
       {/* Printable Sheet */}
-      <div className="py-6 flex justify-center print:p-0 print:m-0">
-        <div className="thermal-sheet bg-white p-5 rounded-xl shadow-lg border border-slate-200 w-[340px] print:w-full print:shadow-none print:border-none print:p-0 print:m-0">
+      <div className="thermal-wrapper py-6 flex justify-center print:p-0 print:m-0">
+        <div className="thermal-sheet bg-white p-4 rounded-xl shadow-lg border border-slate-200 w-[290px] max-w-full print:shadow-none print:border-none">
           
           {/* Logo Header */}
           <div className="text-center space-y-1">
@@ -421,12 +437,12 @@ function PrintInvoiceContent() {
             <img
               src="/hayami.png"
               alt="Hayami Logo"
-              className="h-12 mx-auto object-contain mb-1"
+              className="h-10 mx-auto object-contain mb-1"
             />
-            <h1 className="font-extrabold text-sm uppercase tracking-wide text-slate-900">
+            <h1 className="font-extrabold text-xs uppercase tracking-wider text-slate-900">
               Hayami Indonesia
             </h1>
-            <p className="text-[11px] leading-tight text-slate-700 font-medium">
+            <p className="text-[10px] leading-tight text-slate-700 font-medium">
               Toko Hayami Jatinegara
               <br />
               Jakarta, Indonesia
@@ -436,26 +452,26 @@ function PrintInvoiceContent() {
           <div className="my-2 border-b border-dashed border-slate-400" />
 
           {/* Meta Information */}
-          <div className="space-y-0.5 text-[11px]">
-            <div className="flex justify-between">
-              <span>Tanggal:</span>
-              <span>{formatDateStr(header.tgl_transaksi)} {formatTimeStr(header.tgl_transaksi)}</span>
+          <div className="space-y-0.5 text-[10px]">
+            <div className="flex justify-between items-start gap-1">
+              <span className="shrink-0 text-slate-700">Tanggal:</span>
+              <span className="text-right font-medium">{formatDateStr(header.tgl_transaksi)} {formatTimeStr(header.tgl_transaksi)}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Order ID:</span>
-              <span className="font-bold">{header.id_transaksi}</span>
+            <div className="flex justify-between items-start gap-1">
+              <span className="shrink-0 text-slate-700">Order ID:</span>
+              <span className="font-bold text-right break-all max-w-[65%]">{header.id_transaksi}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Collected By:</span>
-              <span>{header.dibuat_oleh}</span>
+            <div className="flex justify-between items-start gap-1">
+              <span className="shrink-0 text-slate-700">Collected By:</span>
+              <span className="text-right truncate">{header.dibuat_oleh || header.sales || 'admin'}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Customer:</span>
-              <span className="font-bold">{header.nama_customer || header.id_customer}</span>
+            <div className="flex justify-between items-start gap-1">
+              <span className="shrink-0 text-slate-700">Customer:</span>
+              <span className="font-bold text-right truncate max-w-[65%]">{header.nama_customer || header.id_customer || 'CASH'}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Metode:</span>
-              <span className="font-bold">
+            <div className="flex justify-between items-start gap-1">
+              <span className="shrink-0 text-slate-700">Metode:</span>
+              <span className="font-bold text-right break-words max-w-[65%]">
                 {header.akun === 'SPLIT' && payments.length > 0
                   ? `SPLIT (${payments.map((p) => p.metode).join(' + ')})`
                   : header.nama_akun || header.akun || 'CASH'}
@@ -466,19 +482,19 @@ function PrintInvoiceContent() {
           <div className="my-2 border-b border-dashed border-slate-400" />
 
           {/* Line Items */}
-          <div className="space-y-2 text-[11px]">
+          <div className="space-y-2 text-[10px]">
             {items.map((item, idx) => {
               const itemTotal = Number(item.subtotal) || (item.qty * item.harga);
               return (
                 <div key={idx} className="space-y-0.5">
-                  <div className="font-bold text-slate-900">
+                  <div className="font-bold text-slate-900 break-words leading-tight">
                     {idx + 1}. {item.id_bahan} - {item.model} ({item.ukuran})
                   </div>
-                  <div className="flex justify-between text-slate-700 pl-3">
-                    <span>
+                  <div className="flex justify-between items-baseline gap-1 text-slate-700 pl-2">
+                    <span className="shrink-0">
                       {item.qty} {item.uom} x Rp {item.harga.toLocaleString('id-ID')}
                     </span>
-                    <span className="font-semibold">
+                    <span className="font-semibold text-right shrink-0">
                       Rp {itemTotal.toLocaleString('id-ID')}
                     </span>
                   </div>
@@ -489,58 +505,58 @@ function PrintInvoiceContent() {
 
           {/* Customer Lusin Discount */}
           {diskonLusinNominal > 0 && (
-            <div className="mt-2 pt-2 border-t border-dashed border-slate-300 text-[11px] space-y-0.5">
+            <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-300 text-[10px] space-y-0.5">
               <div className="font-semibold text-slate-800">Diskon/Lusin Customer</div>
-              <div className="flex justify-between text-slate-700 pl-3">
-                <span>{totalLusin.toFixed(2)} Ls x -Rp {header.diskon_lusin.toLocaleString('id-ID')}</span>
-                <span className="font-semibold text-rose-600">-Rp {diskonLusinNominal.toLocaleString('id-ID')}</span>
+              <div className="flex justify-between items-baseline gap-1 text-slate-700 pl-2">
+                <span className="shrink-0">{totalLusin.toFixed(2)} Ls x -Rp {header.diskon_lusin.toLocaleString('id-ID')}</span>
+                <span className="font-semibold text-rose-600 shrink-0">-Rp {diskonLusinNominal.toLocaleString('id-ID')}</span>
               </div>
             </div>
           )}
 
           {/* Invoice Discount */}
           {header.disc_invoice > 0 && (
-            <div className="mt-1 text-[11px] flex justify-between text-slate-800">
-              <span className="font-semibold">Diskon Invoice:</span>
-              <span className="font-semibold text-rose-600">-Rp {header.disc_invoice.toLocaleString('id-ID')}</span>
+            <div className="mt-1 text-[10px] flex justify-between items-baseline gap-1 text-slate-800">
+              <span className="font-semibold shrink-0">Diskon Invoice:</span>
+              <span className="font-semibold text-rose-600 shrink-0">-Rp {header.disc_invoice.toLocaleString('id-ID')}</span>
             </div>
           )}
 
           <div className="my-2 border-b border-dashed border-slate-400" />
 
           {/* Total & Payment Summary */}
-          <div className="space-y-1 text-[11px]">
-            <div className="flex justify-between font-extrabold text-xs text-slate-900">
+          <div className="space-y-1 text-[10px]">
+            <div className="flex justify-between items-baseline font-extrabold text-xs text-slate-900">
               <span>Total:</span>
-              <span>Rp {grandTotal.toLocaleString('id-ID')}</span>
+              <span className="shrink-0">Rp {grandTotal.toLocaleString('id-ID')}</span>
             </div>
             {header.akun === 'SPLIT' && payments.length > 0 ? (
               payments.map((p, pIdx) => (
-                <div key={pIdx} className="flex justify-between">
+                <div key={pIdx} className="flex justify-between items-baseline">
                   <span>{p.metode}:</span>
-                  <span>Rp {Number(p.nominal).toLocaleString('id-ID')}</span>
+                  <span className="shrink-0">Rp {Number(p.nominal).toLocaleString('id-ID')}</span>
                 </div>
               ))
             ) : (
-              <div className="flex justify-between">
-                <span>{header.nama_akun || header.akun}:</span>
-                <span>Rp {cashPaid.toLocaleString('id-ID')}</span>
+              <div className="flex justify-between items-baseline">
+                <span>{header.nama_akun || header.akun || 'CASH'}:</span>
+                <span className="shrink-0">Rp {cashPaid.toLocaleString('id-ID')}</span>
               </div>
             )}
-            <div className="flex justify-between">
+            <div className="flex justify-between items-baseline">
               <span>Kembalian:</span>
-              <span>Rp {changeAmount.toLocaleString('id-ID')}</span>
+              <span className="shrink-0">Rp {changeAmount.toLocaleString('id-ID')}</span>
             </div>
-            <div className="flex justify-between pt-1 font-semibold text-slate-700">
+            <div className="flex justify-between items-baseline pt-1 font-semibold text-slate-700">
               <span>Total Lusin:</span>
-              <span>{totalLusin.toFixed(2)} Ls</span>
+              <span className="shrink-0">{totalLusin.toFixed(2)} Ls</span>
             </div>
           </div>
 
           <div className="my-2 border-b border-dashed border-slate-400" />
 
           {/* Footer Note */}
-          <div className="text-center text-[10px] text-slate-600 space-y-0.5 pt-1">
+          <div className="text-center text-[9.5px] text-slate-600 space-y-0.5 pt-1">
             <p className="font-semibold">Barang yang sudah dibeli</p>
             <p className="font-semibold">tidak dapat dikembalikan</p>
             <p className="text-[9px] text-slate-400 pt-1">Terima Kasih Atas Kunjungan Anda</p>

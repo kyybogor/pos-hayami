@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { RowDataPacket } from 'mysql2';
 
-async function ensureLocationStockTable() {
+let isLocationStockEnsured = false;
+async function maybeEnsureLocationStockTable() {
+  if (isLocationStockEnsured) return;
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tb_location_stock (
@@ -21,14 +23,15 @@ async function ensureLocationStockTable() {
         INDEX idx_nama_stock (nama_stock)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+    isLocationStockEnsured = true;
   } catch {
-    // Ignore error if table exists
+    isLocationStockEnsured = true;
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    await ensureLocationStockTable();
+    await maybeEnsureLocationStockTable();
 
     const { searchParams } = new URL(request.url);
     const rawCode = searchParams.get('code') || searchParams.get('q') || '';
@@ -45,14 +48,33 @@ export async function GET(request: NextRequest) {
     let baseBarcode = cleanCode;
     let hasQtySuffix = false;
 
-    // Check if cleanCode ends with 2 numeric digits and length > 2
-    if (cleanCode.length > 2) {
+    // Check if cleanCode is a barcode with a 2-digit quantity suffix
+    // Standard barcode in tb_stock is 7 digits. When printed on packs, it is 9 digits (7-digit barcode + 2-digit pcs).
+    // Example: 276056506 -> base: 2760565, qty: 6 pcs
+    // Example: 276056503 -> base: 2760565, qty: 3 pcs
+    // Example: 276056512 -> base: 2760565, qty: 12 pcs
+    if (/^\d{8,}$/.test(cleanCode)) {
       const last2 = cleanCode.slice(-2);
       const parsedQty = parseInt(last2, 10);
-      if (!isNaN(parsedQty) && parsedQty > 0 && /^\d{2}$/.test(last2)) {
+      if (!isNaN(parsedQty) && parsedQty > 0) {
         qty = parsedQty;
         baseBarcode = cleanCode.slice(0, -2);
         hasQtySuffix = true;
+      }
+    } else if (/^\d{3,7}$/.test(cleanCode)) {
+      // For other numeric codes, check if baseBarcode exists in tb_stock
+      const potentialBase = cleanCode.slice(0, -2);
+      const [chk] = await pool.query<RowDataPacket[]>(
+        'SELECT id FROM tb_stock WHERE barcode = ? LIMIT 1',
+        [potentialBase]
+      );
+      if (chk.length > 0) {
+        const parsedQty = parseInt(cleanCode.slice(-2), 10);
+        if (!isNaN(parsedQty) && parsedQty > 0) {
+          qty = parsedQty;
+          baseBarcode = potentialBase;
+          hasQtySuffix = true;
+        }
       }
     }
 
@@ -93,22 +115,8 @@ export async function GET(request: NextRequest) {
        ) loc ON s.id_bahan = loc.id_bahan AND s.model = loc.model AND s.ukuran = loc.ukuran
     `;
 
-    // STEP 1: Priority 1 - Exact match with FULL scanned cleanCode (Qty = 1)
-    const [exactFullRows] = await pool.query<RowDataPacket[]>(
-      `${baseQuery}
-       WHERE s.barcode = ? OR s.id_bahan = ? OR s.model = ? OR s.id = ?
-       ORDER BY (GREATEST(0, s.stock - COALESCE(loc.loc_qty, 0)) > 0) DESC, s.id ASC
-       LIMIT 1`,
-      [cleanCode, cleanCode, cleanCode, cleanCode]
-    );
-
-    if (exactFullRows.length > 0) {
-      matchedItem = exactFullRows[0];
-      finalQty = 1; // Full code matched an item directly
-    }
-
-    // STEP 2: Priority 2 - If no exact full code match, try baseBarcode with extracted Qty suffix
-    if (!matchedItem && hasQtySuffix && baseBarcode) {
+    // STEP 1: Priority 1 - If barcode has 2-digit quantity suffix, lookup baseBarcode directly with extracted Qty
+    if (hasQtySuffix && baseBarcode) {
       const [baseRows] = await pool.query<RowDataPacket[]>(
         `${baseQuery}
          WHERE s.barcode = ? OR s.id_bahan = ? OR s.model = ? OR s.id = ?
@@ -119,7 +127,23 @@ export async function GET(request: NextRequest) {
 
       if (baseRows.length > 0) {
         matchedItem = baseRows[0];
-        finalQty = qty; // Extracted Qty suffix applied
+        finalQty = qty; // Extracted Qty from suffix applied (e.g. 06 -> 6 pcs, 03 -> 3 pcs)
+      }
+    }
+
+    // STEP 2: Priority 2 - Exact full match with scanned cleanCode (Qty = 1)
+    if (!matchedItem) {
+      const [exactFullRows] = await pool.query<RowDataPacket[]>(
+        `${baseQuery}
+         WHERE s.barcode = ? OR s.id_bahan = ? OR s.model = ? OR s.id = ?
+         ORDER BY (GREATEST(0, s.stock - COALESCE(loc.loc_qty, 0)) > 0) DESC, s.id ASC
+         LIMIT 1`,
+        [cleanCode, cleanCode, cleanCode, cleanCode]
+      );
+
+      if (exactFullRows.length > 0) {
+        matchedItem = exactFullRows[0];
+        finalQty = 1; // Full code matched an item directly
       }
     }
 

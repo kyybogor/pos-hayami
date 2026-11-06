@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import SearchableSelect, { SelectOption } from '@/components/SearchableSelect';
 import {
   RotateCcw,
   Search,
@@ -77,6 +78,11 @@ export default function ReturBarangPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Barang / Model Select2 filter
+  const [selectedBarang, setSelectedBarang] = useState('');
+  const [barangOptions, setBarangOptions] = useState<SelectOption[]>([]);
+  const [loadingBarangOptions, setLoadingBarangOptions] = useState(false);
+
   // Totals Summary
   const [totalReturCustomer, setTotalReturCustomer] = useState(0);
   const [totalReturGudang, setTotalReturGudang] = useState(0);
@@ -150,6 +156,23 @@ export default function ReturBarangPage() {
       }
     };
     initData();
+
+    // Fetch Barang / Model Select2 options (shared with penjualan & retur)
+    const loadBarangOptions = async () => {
+      try {
+        setLoadingBarangOptions(true);
+        const res = await fetch('/api/barang-keluar?options=barang');
+        const json = await res.json();
+        if (json.success && json.options?.barang) {
+          setBarangOptions(json.options.barang);
+        }
+      } catch (e) {
+        console.error('Error load barang options (retur):', e);
+      } finally {
+        setLoadingBarangOptions(false);
+      }
+    };
+    loadBarangOptions();
   }, []);
 
   const fetchTransactions = useCallback(async () => {
@@ -161,6 +184,7 @@ export default function ReturBarangPage() {
         params.append('tgl_to', tglTo);
       }
       if (search.trim()) params.append('search', search.trim());
+      if (selectedBarang.trim()) params.append('barang', selectedBarang.trim());
       if (filterCustomer.trim()) params.append('customer', filterCustomer.trim());
       if (filterAkun.trim()) params.append('akun', filterAkun.trim());
       if (selectedCabang && selectedCabang !== 'ALL') params.append('cabang', selectedCabang);
@@ -187,7 +211,7 @@ export default function ReturBarangPage() {
     } finally {
       setLoading(false);
     }
-  }, [tglFrom, tglTo, search, filterCustomer, filterAkun, selectedCabang, page]);
+  }, [tglFrom, tglTo, search, selectedBarang, filterCustomer, filterAkun, selectedCabang, page]);
 
   useEffect(() => {
     fetchTransactions();
@@ -485,7 +509,7 @@ export default function ReturBarangPage() {
 
         {/* Filters */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-6' : 'lg:grid-cols-5'} gap-3.5`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-7' : 'lg:grid-cols-6'} gap-3.5`}>
             {/* Date From */}
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">
@@ -562,6 +586,21 @@ export default function ReturBarangPage() {
               </div>
             )}
 
+            {/* Cari Barang / Model Select2 */}
+            <div>
+              <SearchableSelect
+                label="Cari Barang / Model"
+                icon={<Package className="w-3.5 h-3.5 text-slate-400" />}
+                options={barangOptions}
+                value={selectedBarang}
+                onChange={(val) => setSelectedBarang(val)}
+                placeholder={loadingBarangOptions ? 'Memuat...' : '- Semua Barang -'}
+                searchPlaceholder="Ketik bahan, model, atau ukuran..."
+                clearable={true}
+                allowCustom={true}
+              />
+            </div>
+
             {/* Search Input */}
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">
@@ -570,9 +609,10 @@ export default function ReturBarangPage() {
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="No Transaksi / Ket / Barang..."
+                  placeholder="No Transaksi / Keterangan..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); fetchTransactions(); } }}
                   className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 />
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
@@ -598,6 +638,7 @@ export default function ReturBarangPage() {
                   setSearch('');
                   setFilterCustomer('');
                   setFilterAkun('');
+                  setSelectedBarang('');
                   if (isSuperAdmin) {
                     setSelectedCabang('ALL');
                   } else if (currentUser?.branch) {

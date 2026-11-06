@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import SearchableSelect, { SelectOption } from '@/components/SearchableSelect';
 import {
   ClipboardList,
   Search,
@@ -18,6 +19,8 @@ import {
   Package,
   Layers,
   Building2,
+  Barcode,
+  Scan,
 } from 'lucide-react';
 
 interface OpnameItem {
@@ -74,17 +77,21 @@ export default function StockOpnamePage() {
   const [formItems, setFormItems] = useState<OpnameItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  // Form Item Inputs
-  const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  const [searchProductQuery, setSearchProductQuery] = useState<string>('');
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [availableUkurans, setAvailableUkurans] = useState<string[]>([]);
-  const [availableUoms, setAvailableUoms] = useState<string[]>([]);
+  // Form Item Inputs (Select2 State)
+  const [tipeOptions, setTipeOptions] = useState<SelectOption[]>([]);
+  const [selectedTipe, setSelectedTipe] = useState<string>('');
+  const [modelOptions, setModelOptions] = useState<SelectOption[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [ukuranOptions, setUkuranOptions] = useState<SelectOption[]>([]);
   const [selectedUkuran, setSelectedUkuran] = useState<string>('');
-  const [selectedUom, setSelectedUom] = useState<string>('');
+  const [selectedUom, setSelectedUom] = useState<string>('PCS');
+  const [selectedStock, setSelectedStock] = useState<number>(0);
   const [stockVariants, setStockVariants] = useState<any[]>([]);
+
+  // Barcode scanner state
+  const [barcodeInput, setBarcodeInput] = useState<string>('');
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   // Delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -167,113 +174,337 @@ export default function StockOpnamePage() {
     fetchTransactions();
   }, [fetchTransactions]);
 
-  // Search materials for item picker dropdown
+  // 1. Fetch distinct Tipe options from tb_stock for Select2
+  const fetchTipes = useCallback(async () => {
+    try {
+      const res = await fetch('/api/opname/products');
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.tipes)) {
+        setTipeOptions(data.tipes.map((t: string) => ({ value: t, label: t })));
+      }
+    } catch (e) {
+      console.error('Failed to fetch tipes for opname:', e);
+    }
+  }, []);
+
   useEffect(() => {
-    const searchProducts = async () => {
-      if (!searchProductQuery.trim()) {
-        setProductOptions([]);
-        return;
-      }
-      try {
-        const res = await fetch(
-          `/api/opname/products?search=${encodeURIComponent(searchProductQuery)}`
-        );
-        const data = await res.json();
-        if (res.ok && data.success) {
-          setProductOptions(data.data || []);
-        }
-      } catch (err) {
-        console.warn('Failed to search products:', err);
-      }
-    };
+    fetchTipes();
+  }, [fetchTipes]);
 
-    const timer = setTimeout(searchProducts, 250);
-    return () => clearTimeout(timer);
-  }, [searchProductQuery]);
-
-  // When a product is selected, fetch its stock details & available variants
-  const handleSelectProduct = async (prodName: string) => {
-    setSelectedProduct(prodName);
+  // 2. When Tipe (id_bahan) changes, fetch filtered models from tb_stock
+  const handleSelectTipe = async (tipe: string) => {
+    setSelectedTipe(tipe);
     setSelectedModel('');
     setSelectedUkuran('');
-    setSelectedUom('');
+    setSelectedUom('PCS');
+    setSelectedStock(0);
+    setModelOptions([]);
+    setUkuranOptions([]);
+    setStockVariants([]);
 
-    if (!prodName) return;
+    if (!tipe) return;
 
     try {
-      const res = await fetch(
-        `/api/opname/products?nama_bahan=${encodeURIComponent(prodName)}`
-      );
+      const res = await fetch(`/api/opname/products?id_bahan=${encodeURIComponent(tipe)}`);
       const data = await res.json();
       if (res.ok && data.success) {
-        setStockVariants(data.stockVariants || []);
-        setAvailableModels(data.models.length > 0 ? data.models : ['Diskon']);
-        setAvailableUkurans(data.ukurans.length > 0 ? data.ukurans : ['#']);
-        setAvailableUoms(data.uoms.length > 0 ? data.uoms : ['PCS']);
+        const variants = data.stockVariants || [];
+        setStockVariants(variants);
 
-        if (data.models.length > 0) setSelectedModel(data.models[0]);
-        if (data.ukurans.length > 0) setSelectedUkuran(data.ukurans[0]);
-        if (data.uoms.length > 0) setSelectedUom(data.uoms[0]);
+        const mOpts: SelectOption[] = (data.models || []).map((m: string) => ({ value: m, label: m }));
+        setModelOptions(mOpts);
+
+        // If only 1 model exists, auto-select it
+        if (mOpts.length === 1) {
+          handleSelectModel(mOpts[0].value, variants);
+        }
       }
     } catch (err) {
-      console.warn('Failed to fetch stock variants:', err);
+      console.error('Failed to fetch models for tipe:', err);
     }
   };
 
-  const handleAddItem = () => {
-    if (!selectedProduct) {
-      showToast('error', 'Pilih nama barang terlebih dahulu!');
+  // 3. When Model changes, filter ukurans for this Tipe + Model
+  const handleSelectModel = (modelVal: string, variantsList?: any[]) => {
+    setSelectedModel(modelVal);
+    setSelectedUkuran('');
+    setSelectedUom('PCS');
+    setSelectedStock(0);
+
+    if (!modelVal) {
+      setUkuranOptions([]);
       return;
     }
 
-    // Find stock from stockVariants matching model, ukuran, uom
-    const foundVar = stockVariants.find(
-      (v) =>
-        (selectedModel ? v.model === selectedModel : true) &&
-        (selectedUkuran ? v.ukuran === selectedUkuran : true) &&
-        (selectedUom ? v.uom === selectedUom : true)
-    );
+    const variants = variantsList || stockVariants;
+    const matching = variants.filter((v: any) => v.model === modelVal);
+    const ukurans = Array.from(new Set(matching.map((v: any) => v.ukuran))).filter(Boolean);
 
-    const initialStock = foundVar ? Number(foundVar.stock) || 0 : 0;
-    const foundProductOpt = productOptions.find((p) => p.nama_bahan === selectedProduct);
-    const idBahanStr = foundProductOpt ? foundProductOpt.id_bahan : foundVar?.id_bahan || '';
+    const uOpts: SelectOption[] = ukurans.map((u: any) => {
+      const v = matching.find((x: any) => x.ukuran === u);
+      const st = v ? Number(v.stock) || 0 : 0;
+      const uom = v?.uom || 'PCS';
+      return {
+        value: u,
+        label: `${u} (Stok: ${st} ${uom})`,
+        subLabel: `Stok Sistem: ${st} ${uom}`,
+      };
+    });
+    setUkuranOptions(uOpts);
+
+    // If only 1 size exists, auto-select it
+    if (uOpts.length === 1) {
+      handleSelectUkuran(uOpts[0].value, matching);
+    }
+  };
+
+  // 4. When Ukuran changes, set initial stock & uom
+  const handleSelectUkuran = (ukuranVal: string, matchingList?: any[]) => {
+    setSelectedUkuran(ukuranVal);
+    if (!ukuranVal) {
+      setSelectedUom('PCS');
+      setSelectedStock(0);
+      return;
+    }
+
+    const list = matchingList || stockVariants.filter((v: any) => v.model === selectedModel);
+    const matched = list.find((v: any) => v.ukuran === ukuranVal);
+    if (matched) {
+      setSelectedUom(matched.uom || 'PCS');
+      setSelectedStock(Number(matched.stock) || 0);
+    }
+  };
+
+  // 5. Manual Add Item from Select2 Dropdowns
+  const handleAddItem = () => {
+    if (!selectedTipe) {
+      showToast('error', 'Pilih Tipe / Nama Barang terlebih dahulu!');
+      return;
+    }
+    if (!selectedModel) {
+      showToast('error', 'Pilih Model terlebih dahulu!');
+      return;
+    }
+    if (!selectedUkuran) {
+      showToast('error', 'Pilih Ukuran terlebih dahulu!');
+      return;
+    }
 
     // Check if item already exists in formItems
-    const exists = formItems.some(
+    const existsIndex = formItems.findIndex(
       (it) =>
-        it.id_product === selectedProduct &&
-        it.model === (selectedModel || 'Diskon') &&
-        it.ukuran === (selectedUkuran || '#') &&
-        it.uom === (selectedUom || 'PCS')
+        it.id_product === selectedTipe &&
+        it.model === selectedModel &&
+        it.ukuran === selectedUkuran
     );
 
-    if (exists) {
-      showToast('error', 'Barang dengan varian/model/ukuran ini sudah ada dalam daftar opname!');
+    if (existsIndex >= 0) {
+      showToast(
+        'error',
+        `Barang "${selectedTipe} - ${selectedModel} (${selectedUkuran})" sudah ada di daftar opname (baris ke-${existsIndex + 1})!`
+      );
       return;
     }
 
     const newItem: OpnameItem = {
-      inv_in_id: 'new_' + Date.now(),
-      id_product: selectedProduct,
-      id_bahan: idBahanStr,
-      model: selectedModel || 'Diskon',
-      ukuran: selectedUkuran || '#',
+      inv_in_id: 'new_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      id_product: selectedTipe,
+      id_bahan: selectedTipe,
+      model: selectedModel,
+      ukuran: selectedUkuran,
       uom: selectedUom || 'PCS',
-      stock_awal: initialStock,
-      stock_change: initialStock,
+      stock_awal: selectedStock,
+      stock_change: selectedStock, // default to stock_awal so user just edits real stock
       stock_opname: 0,
     };
 
-    setFormItems([...formItems, newItem]);
+    setFormItems((prev) => [newItem, ...prev]);
+    showToast('success', `Berhasil menambahkan: ${selectedTipe} - ${selectedModel} (${selectedUkuran})`);
 
-    // Reset item input
-    setSelectedProduct('');
-    setSearchProductQuery('');
-    setSelectedModel('');
+    // Reset ukuran & stock preview (keep Tipe & Model for fast sequential size addition)
     setSelectedUkuran('');
-    setSelectedUom('');
-    setStockVariants([]);
+    setSelectedStock(0);
   };
+
+  // 6. Barcode Scanner Handler
+  const barcodeInputStateRef = useRef('');
+  barcodeInputStateRef.current = barcodeInput;
+
+  const handleBarcodeScan = useCallback(
+    async (codeToProcess?: string) => {
+      const raw = (codeToProcess || barcodeInputRef.current?.value || barcodeInputStateRef.current).trim();
+      if (!raw) return;
+
+      // Ensure input displays the scanned code
+      setBarcodeInput(raw);
+      if (barcodeInputRef.current) barcodeInputRef.current.value = raw;
+
+      setIsScanning(true);
+      try {
+        const res = await fetch(`/api/opname/products?barcode=${encodeURIComponent(raw)}`);
+        const data = await res.json();
+
+        if (res.ok && data.success && data.item) {
+          const item = data.item;
+          const existsIndex = formItems.findIndex(
+            (it) =>
+              it.id_product === item.id_bahan &&
+              it.model === item.model &&
+              it.ukuran === item.ukuran
+          );
+
+          if (existsIndex >= 0) {
+            showToast(
+              'error',
+              `Barang "${item.id_bahan} - ${item.model} (${item.ukuran})" sudah ada di daftar opname (baris ke-${existsIndex + 1})!`
+            );
+          } else {
+            const newItem: OpnameItem = {
+              inv_in_id: 'new_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+              id_product: item.id_bahan,
+              id_bahan: item.id_bahan,
+              model: item.model || 'Diskon',
+              ukuran: item.ukuran || '#',
+              uom: item.uom || 'PCS',
+              stock_awal: item.stock,
+              stock_change: item.stock,
+              stock_opname: 0,
+            };
+
+            setFormItems((prev) => [newItem, ...prev]);
+            showToast(
+              'success',
+              `Berhasil menambahkan: ${item.id_bahan} - ${item.model} (${item.ukuran}) | Stok Awal: ${item.stock} ${item.uom}`
+            );
+          }
+          setBarcodeInput('');
+          if (barcodeInputRef.current) barcodeInputRef.current.value = '';
+          setTimeout(() => {
+            barcodeInputRef.current?.focus();
+          }, 50);
+        } else {
+          showToast('error', data.message || `Barcode "${raw}" tidak ditemukan di database.`);
+          setBarcodeInput('');
+          if (barcodeInputRef.current) barcodeInputRef.current.value = '';
+          setTimeout(() => {
+            barcodeInputRef.current?.focus();
+          }, 50);
+        }
+      } catch {
+        showToast('error', 'Gagal memproses scan barcode.');
+      } finally {
+        setIsScanning(false);
+      }
+    },
+    [formItems]
+  );
+
+  // Auto focus barcode input when modal opens
+  useEffect(() => {
+    if (modalOpen && !isReadOnly) {
+      const timers = [
+        setTimeout(() => barcodeInputRef.current?.focus(), 50),
+        setTimeout(() => barcodeInputRef.current?.focus(), 150),
+        setTimeout(() => barcodeInputRef.current?.focus(), 300),
+      ];
+      return () => timers.forEach(clearTimeout);
+    }
+  }, [modalOpen, isReadOnly]);
+
+  // 7. Global Barcode Scanner Listener while modal is open
+  useEffect(() => {
+    if (!modalOpen || isReadOnly) return;
+
+    let barcodeBuffer = '';
+    let lastKeyTime = 0;
+    let autoScanTimer: NodeJS.Timeout | null = null;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // Don't intercept if user is typing in a textarea or number input (e.g. Qty Baru or Keterangan)
+      if (target && (target.tagName === 'TEXTAREA' || target.getAttribute('type') === 'number')) {
+        return;
+      }
+
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+      const isKeyJ = e.key === 'j' || e.key === 'J' || e.keyCode === 74 || e.which === 74;
+      const isLF = e.key === 'LineFeed' || e.key === 'Linefeed' || e.keyCode === 10 || e.which === 10;
+      const isEnter = e.key === 'Enter' || e.keyCode === 13 || e.which === 13;
+      const isTab = e.key === 'Tab' || e.keyCode === 9;
+
+      // 1. Prevent Chrome downloads on Ctrl+J / Linefeed from scanners
+      if ((isCtrlOrMeta && isKeyJ) || isLF) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof (e as any).stopImmediatePropagation === 'function') {
+          (e as any).stopImmediatePropagation();
+        }
+
+        const domVal = barcodeInputRef.current?.value || '';
+        const codeToProcess = (barcodeBuffer.trim() || domVal.trim() || barcodeInputStateRef.current.trim());
+        barcodeBuffer = '';
+        if (codeToProcess.length >= 3) {
+          handleBarcodeScan(codeToProcess);
+        }
+        return;
+      }
+
+      // 2. Handle Enter or Tab (barcode scanner termination)
+      if (isEnter || isTab) {
+        const domVal = barcodeInputRef.current?.value || '';
+        const codeToProcess = (barcodeBuffer.trim() || domVal.trim() || barcodeInputStateRef.current.trim());
+        barcodeBuffer = '';
+        if (codeToProcess.length >= 3) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleBarcodeScan(codeToProcess);
+          return;
+        }
+        return;
+      }
+
+      // 3. Track fast keypress from scanner
+      const now = Date.now();
+      const timeDiff = now - lastKeyTime;
+      lastKeyTime = now;
+      const isFast = timeDiff < 60;
+
+      if (e.key && e.key.length === 1 && !isCtrlOrMeta && !e.altKey) {
+        if (target === barcodeInputRef.current) {
+          barcodeBuffer += e.key;
+        } else {
+          // If focus is NOT on barcode input, focus it and redirect characters into it
+          if (timeDiff > 120) {
+            barcodeBuffer = e.key;
+          } else {
+            barcodeBuffer += e.key;
+          }
+          setBarcodeInput(barcodeBuffer);
+          if (barcodeInputRef.current) barcodeInputRef.current.value = barcodeBuffer;
+          barcodeInputRef.current?.focus();
+        }
+
+        // Auto-scan timer if scanner typed rapidly without sending Enter
+        if (autoScanTimer) clearTimeout(autoScanTimer);
+        if (isFast || barcodeBuffer.length >= 6) {
+          autoScanTimer = setTimeout(() => {
+            const domVal = barcodeInputRef.current?.value || '';
+            const codeToProcess = (barcodeBuffer.trim() || domVal.trim() || barcodeInputStateRef.current.trim());
+            if (codeToProcess.length >= 6) {
+              barcodeBuffer = '';
+              handleBarcodeScan(codeToProcess);
+            }
+          }, 150);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeyDown, true);
+      if (autoScanTimer) clearTimeout(autoScanTimer);
+    };
+  }, [modalOpen, isReadOnly, handleBarcodeScan]);
 
   const handleQtyChange = (index: number, newQty: number) => {
     const updated = [...formItems];
@@ -294,9 +525,19 @@ export default function StockOpnamePage() {
     setFormKeterangan('');
     setFormItems([]);
     setIsReadOnly(false);
-    setSelectedProduct('');
-    setSearchProductQuery('');
+    setSelectedTipe('');
+    setSelectedModel('');
+    setSelectedUkuran('');
+    setSelectedUom('PCS');
+    setSelectedStock(0);
+    setModelOptions([]);
+    setUkuranOptions([]);
+    setStockVariants([]);
+    setBarcodeInput('');
     setModalOpen(true);
+    setTimeout(() => {
+      barcodeInputRef.current?.focus();
+    }, 100);
   };
 
   const handleOpenEditModal = async (id: string, readOnly: boolean) => {
@@ -312,9 +553,21 @@ export default function StockOpnamePage() {
         setFormKeterangan(tx.keterangan || '');
         setFormItems(tx.items || []);
         setIsReadOnly(readOnly || tx.status === 's');
-        setSelectedProduct('');
-        setSearchProductQuery('');
+        setSelectedTipe('');
+        setSelectedModel('');
+        setSelectedUkuran('');
+        setSelectedUom('PCS');
+        setSelectedStock(0);
+        setModelOptions([]);
+        setUkuranOptions([]);
+        setStockVariants([]);
+        setBarcodeInput('');
         setModalOpen(true);
+        if (!readOnly && tx.status !== 's') {
+          setTimeout(() => {
+            barcodeInputRef.current?.focus();
+          }, 100);
+        }
       } else {
         showToast('error', data.message || 'Gagal memuat detail opname.');
       }
@@ -783,108 +1036,126 @@ export default function StockOpnamePage() {
 
               {/* Add Item Form (Only when NOT read-only) */}
               {!isReadOnly && (
-                <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-100 space-y-3">
-                  <h4 className="font-bold text-slate-800 text-xs flex items-center space-x-1.5">
-                    <Package className="w-4 h-4 text-emerald-600" />
-                    <span>Tambah Detail Barang Opname</span>
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-                    {/* Select Product */}
-                    <div className="lg:col-span-2">
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Cari Nama Barang
+                <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200/80 space-y-4">
+                  {/* 1. BARCODE SCANNER SECTION */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-bold text-slate-700 flex items-center space-x-1.5">
+                        <Barcode className="w-4 h-4 text-emerald-600" />
+                        <span>Scan Barcode Produk</span>
                       </label>
-                      <div className="relative">
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <div className="relative flex-1">
+                        <Scan className="w-4 h-4 text-emerald-600 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input
+                          autoFocus
+                          ref={barcodeInputRef}
                           type="text"
-                          placeholder="Ketik nama / ID barang..."
-                          value={searchProductQuery}
-                          onChange={(e) => setSearchProductQuery(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                          value={barcodeInput}
+                          onChange={(e) => setBarcodeInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.keyCode === 13) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const val = (e.currentTarget.value || barcodeInput).trim();
+                              if (val) handleBarcodeScan(val);
+                            }
+                          }}
+                          placeholder="Scan barcode produk di sini..."
+                          className="w-full pl-9 pr-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 font-medium shadow-2xs"
                         />
-                        {productOptions.length > 0 && (
-                          <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 max-h-40 overflow-y-auto divide-y divide-slate-100">
-                            {productOptions.map((p) => (
-                              <div
-                                key={p.id_bahan}
-                                onClick={() => {
-                                  handleSelectProduct(p.nama_bahan);
-                                  setSearchProductQuery(p.nama_bahan);
-                                  setProductOptions([]);
-                                }}
-                                className="p-2 hover:bg-emerald-50 cursor-pointer text-slate-700 hover:text-emerald-800 font-medium"
-                              >
-                                {p.label}
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
+                      <button
+                        type="button"
+                        disabled={isScanning || !barcodeInput.trim()}
+                        onClick={() => {
+                          const val = (barcodeInputRef.current?.value || barcodeInput).trim();
+                          if (val) handleBarcodeScan(val);
+                        }}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center space-x-1.5 shrink-0 cursor-pointer"
+                      >
+                        <Scan className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                        <span>{isScanning ? 'Mencari...' : 'Scan Barcode'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <div className="h-px bg-emerald-200/70 flex-1" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700/80">
+                      atau pilih manual via select 2
+                    </span>
+                    <div className="h-px bg-emerald-200/70 flex-1" />
+                  </div>
+
+                  {/* 2. SELECT2 INPUTS (TIPE, MODEL, UKURAN, UOM) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                    {/* Select 2: Tipe / Nama Barang */}
+                    <div className="lg:col-span-4 sm:col-span-6">
+                      <SearchableSelect
+                        options={tipeOptions}
+                        value={selectedTipe}
+                        onChange={handleSelectTipe}
+                        placeholder="Pilih Tipe / Nama Barang..."
+                        searchPlaceholder="Ketik untuk mencari tipe..."
+                        label="Tipe / Nama Barang (id_bahan)"
+                        icon={<Package className="w-3.5 h-3.5 text-emerald-600" />}
+                      />
                     </div>
 
-                    {/* Select Model */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Model
-                      </label>
-                      <select
+                    {/* Select 2: Model (Filtered by selected Tipe) */}
+                    <div className="lg:col-span-3 sm:col-span-6">
+                      <SearchableSelect
+                        options={modelOptions}
                         value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                      >
-                        {availableModels.map((m, i) => (
-                          <option key={i} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleSelectModel(val)}
+                        placeholder={selectedTipe ? 'Pilih Model...' : 'Pilih Tipe dahulu'}
+                        searchPlaceholder="Ketik untuk mencari model..."
+                        disabled={!selectedTipe || modelOptions.length === 0}
+                        label="Model"
+                        icon={<Layers className="w-3.5 h-3.5 text-emerald-600" />}
+                      />
                     </div>
 
-                    {/* Select Ukuran */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Ukuran
-                      </label>
-                      <select
+                    {/* Select 2: Ukuran (Filtered by selected Model) */}
+                    <div className="lg:col-span-2 sm:col-span-4">
+                      <SearchableSelect
+                        options={ukuranOptions}
                         value={selectedUkuran}
-                        onChange={(e) => setSelectedUkuran(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                      >
-                        {availableUkurans.map((u, i) => (
-                          <option key={i} value={u}>
-                            {u}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleSelectUkuran(val)}
+                        placeholder={selectedModel ? 'Pilih Ukuran...' : 'Pilih Model'}
+                        searchPlaceholder="Cari ukuran..."
+                        disabled={!selectedModel || ukuranOptions.length === 0}
+                        label="Ukuran"
+                      />
                     </div>
 
-                    {/* Select UOM & Add Button */}
-                    <div className="flex space-x-2">
-                      <div className="flex-1">
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                          UOM
-                        </label>
-                        <select
-                          value={selectedUom}
-                          onChange={(e) => setSelectedUom(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                        >
-                          {availableUoms.map((um, i) => (
-                            <option key={i} value={um}>
-                              {um}
-                            </option>
-                          ))}
-                        </select>
+                    {/* UOM & Stok Sistem Badge */}
+                    <div className="lg:col-span-2 sm:col-span-4">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        UOM / Stok
+                      </label>
+                      <div className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl flex items-center justify-between text-xs min-h-[38px]">
+                        <span className="font-semibold text-slate-600">{selectedUom || 'PCS'}</span>
+                        <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px]">
+                          {selectedStock} Pcs
+                        </span>
                       </div>
+                    </div>
 
+                    {/* Button Tambah */}
+                    <div className="lg:col-span-1 sm:col-span-4 flex">
                       <button
                         type="button"
                         onClick={handleAddItem}
-                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold transition-all cursor-pointer flex items-center justify-center"
-                        title="Tambah ke daftar"
+                        disabled={!selectedTipe || !selectedModel || !selectedUkuran}
+                        className="w-full h-[38px] bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center space-x-1 shadow-xs"
+                        title="Tambah ke daftar opname"
                       >
                         <Plus className="w-4 h-4" />
+                        <span className="lg:hidden text-xs">Tambah</span>
                       </button>
                     </div>
                   </div>

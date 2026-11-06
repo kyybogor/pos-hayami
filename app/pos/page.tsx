@@ -150,6 +150,23 @@ export default function PosPage() {
   // Product Images Mapping State (with offline localStorage caching)
   const [productImagesMap, setProductImagesMap] = useState<Record<string, string>>({});
 
+  // Instant catalog cache loader: show cached products immediately in 0ms on any device
+  useEffect(() => {
+    try {
+      const cachedCatalog = localStorage.getItem('pos_initial_catalog_cache');
+      if (cachedCatalog) {
+        const parsed = JSON.parse(cachedCatalog);
+        if (Array.isArray(parsed.data) && parsed.data.length > 0) {
+          setProducts(parsed.data);
+          setTotalCatalogCount(parsed.total || 0);
+          setLoading(false);
+        }
+      }
+    } catch (e) {
+      // Ignore cache parse error
+    }
+  }, []);
+
   // Load cached product images from localStorage for instant offline access
   useEffect(() => {
     try {
@@ -481,6 +498,9 @@ export default function PosPage() {
 
   // Barcode Scanner Handler State & Audio Beep Feedback
   const [isScanning, setIsScanning] = useState(false);
+  const isScanningRef = useRef(false);
+  const lastScannedCodeRef = useRef('');
+  const lastScanTimeRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const playBeep = (isSuccess: boolean = true) => {
@@ -511,7 +531,22 @@ export default function PosPage() {
       const code = (codeToScan || searchQuery).trim();
       if (!code) return;
 
+      const now = Date.now();
+      // Block duplicate scan trigger of the same barcode within 1200ms
+      if (code === lastScannedCodeRef.current && now - lastScanTimeRef.current < 1200) {
+        return;
+      }
+
+      // Block concurrent scan executions
+      if (isScanningRef.current) {
+        return;
+      }
+
+      isScanningRef.current = true;
+      lastScannedCodeRef.current = code;
+      lastScanTimeRef.current = now;
       setIsScanning(true);
+
       try {
         const res = await fetch(`/api/pos/scan?code=${encodeURIComponent(code)}`);
         const data = await res.json();
@@ -523,7 +558,6 @@ export default function PosPage() {
           if (item.stock <= 0) {
             playBeep(false);
             showToast('error', `Stok ${item.id_bahan} ${item.model} (Size: ${item.ukuran}) habis! (0 pcs)`);
-            setIsScanning(false);
             return;
           }
 
@@ -602,6 +636,7 @@ export default function PosPage() {
         showToast('error', 'Terjadi kesalahan koneksi saat scan barcode.');
       } finally {
         setIsScanning(false);
+        isScanningRef.current = false;
       }
     },
     [searchQuery, selectedCustType]
@@ -1033,6 +1068,15 @@ export default function PosPage() {
           const newItems: ProductCardData[] = data.data || [];
           if (isNewSearch) {
             setProducts(newItems);
+            // Cache default initial catalog page for instant 0ms load on next visits/devices
+            if (targetPage === 1 && !querySearch.trim() && !tipeFilter.trim() && !modelFilter.trim()) {
+              try {
+                localStorage.setItem(
+                  'pos_initial_catalog_cache',
+                  JSON.stringify({ data: newItems, total: data.total || 0 })
+                );
+              } catch {}
+            }
           } else {
             setProducts((prev) => [...prev, ...newItems]);
           }
@@ -1052,24 +1096,17 @@ export default function PosPage() {
     []
   );
 
-  // Initial load and search / filter trigger
+  // Initial load and search / filter trigger with adaptive debounce (0ms on initial mount, 250ms when typing)
+  const isFirstMountRef = useRef(true);
   useEffect(() => {
+    const delay = isFirstMountRef.current && !searchQuery.trim() && !selectedTipeFilter && !selectedModelFilter ? 0 : 250;
+    isFirstMountRef.current = false;
+
     const timer = setTimeout(() => {
       fetchProducts(1, searchQuery, true, selectedTipeFilter, selectedModelFilter);
-    }, 250);
+    }, delay);
     return () => clearTimeout(timer);
   }, [searchQuery, selectedTipeFilter, selectedModelFilter, fetchProducts]);
-
-  // Auto-scan trigger if searchQuery matches scanned barcode pattern (e.g., length >= 5 and ends with 2 numeric digits)
-  useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (trimmed.length >= 5 && /^\d{2}$/.test(trimmed.slice(-2))) {
-      const timer = setTimeout(() => {
-        handleBarcodeScan(trimmed);
-      }, 400);
-      return () => clearTimeout(timer);
-    }
-  }, [searchQuery, handleBarcodeScan]);
 
   // Global Barcode Scanner Interceptor & Chrome Downloads (Ctrl+J / LF) Blocker
   useEffect(() => {
@@ -1089,14 +1126,11 @@ export default function PosPage() {
           (e as any).stopImmediatePropagation();
         }
 
-        // If scanner buffered characters, trigger scan immediately
-        if (barcodeBuffer.trim().length >= 3) {
-          const codeToProcess = barcodeBuffer.trim();
-          barcodeBuffer = '';
-          setSearchQuery(codeToProcess);
+        const codeToProcess = barcodeBuffer.trim() || searchQuery.trim();
+        barcodeBuffer = '';
+        if (codeToProcess.length >= 3) {
+          setSearchQuery('');
           handleBarcodeScan(codeToProcess);
-        } else if (searchQuery.trim().length >= 3) {
-          handleBarcodeScan();
         }
         return;
       }
@@ -1112,7 +1146,7 @@ export default function PosPage() {
           e.stopPropagation();
           const codeToProcess = barcodeBuffer.trim();
           barcodeBuffer = '';
-          setSearchQuery(codeToProcess);
+          setSearchQuery('');
           handleBarcodeScan(codeToProcess);
           return;
         }
@@ -1742,7 +1776,11 @@ export default function PosPage() {
                   if (e.key === 'Enter' || (isCtrlOrMeta && isKeyJ) || isLF) {
                     e.preventDefault();
                     e.stopPropagation();
-                    handleBarcodeScan();
+                    const code = searchQuery.trim();
+                    if (code) {
+                      setSearchQuery('');
+                      handleBarcodeScan(code);
+                    }
                   }
                 }}
                 className="w-full text-xs font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-16 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"

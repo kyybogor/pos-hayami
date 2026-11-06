@@ -262,7 +262,11 @@ export default function RekapitulasiPenjualanPage() {
                 <div className="relative">
                   <select
                     value={selectedCabang}
-                    onChange={(e) => setSelectedCabang(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedCabang(val);
+                      handleFetchReport(undefined, val);
+                    }}
                     className="w-full pl-9 pr-3 py-2 text-xs md:text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all cursor-pointer"
                   >
                     <option value="ALL">-- Semua Cabang --</option>

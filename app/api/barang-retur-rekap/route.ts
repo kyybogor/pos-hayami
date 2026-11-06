@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import pool from '@/lib/db';
 import { verifySessionToken } from '@/lib/auth';
+import { getBranchFilterNames } from '@/lib/branch';
 import { RowDataPacket } from 'mysql2';
 
 export async function GET(req: Request) {
@@ -54,8 +55,11 @@ export async function GET(req: Request) {
     const params: any[] = [];
 
     if (effectiveBranch) {
-      whereSql += ' AND (a.id_cabang = ? OR a.id_cabang = (SELECT nama_cabang FROM tb_cabang WHERE id_cabang = ? LIMIT 1) OR (SELECT CAST(id_cabang AS CHAR) FROM tb_cabang WHERE nama_cabang = ? LIMIT 1) = a.id_cabang)';
-      params.push(effectiveBranch, effectiveBranch, effectiveBranch);
+      const branchNames = await getBranchFilterNames(effectiveBranch);
+      if (branchNames.length > 0) {
+        whereSql += ' AND a.id_cabang IN (?)';
+        params.push(branchNames);
+      }
     }
 
     if (tgl_from && tgl_to) {

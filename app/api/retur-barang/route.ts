@@ -21,6 +21,7 @@ export async function GET(req: Request) {
     const tgl_to = searchParams.get('tgl_to') || '';
     const customer = searchParams.get('customer') || '';
     const akun = searchParams.get('akun') || '';
+    const barang = searchParams.get('barang') || '';
     const cabangParam = searchParams.get('cabang') || '';
 
     let effectiveBranch = userBranch;
@@ -61,14 +62,45 @@ export async function GET(req: Request) {
         FROM tb_retur 
         WHERE id_transaksi LIKE ? 
            OR keterangan LIKE ? 
-           OR id_bahan LIKE ? 
-           OR model LIKE ? 
-           OR ukuran LIKE ?
-           OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
-           OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model)) LIKE ?
            OR invret LIKE ?
       )`);
-      params.push(term, term, term, term, term, term, term, term);
+      params.push(term, term, term);
+    }
+
+    if (barang.trim()) {
+      // barang param format: "id_bahan - model - ukuran" or "id_bahan - model" or free text
+      const parts = barang.split(' - ').map((s) => s.trim());
+      if (parts.length >= 3) {
+        const idBahan = parts[0];
+        const modelStr = parts[1];
+        const ukuranStr = parts.slice(2).join(' - ');
+        whereConditions.push(`id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_retur 
+          WHERE (id_bahan = ? AND model = ? AND ukuran = ?)
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
+        )`);
+        params.push(idBahan, modelStr, ukuranStr, `%${barang.trim()}%`);
+      } else if (parts.length === 2) {
+        whereConditions.push(`id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_retur 
+          WHERE (id_bahan = ? AND model = ?)
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model)) LIKE ?
+        )`);
+        params.push(parts[0], parts[1], `%${barang.trim()}%`);
+      } else {
+        const term = `%${barang.trim()}%`;
+        whereConditions.push(`id_transaksi IN (
+          SELECT DISTINCT id_transaksi 
+          FROM tb_retur 
+          WHERE id_bahan LIKE ? 
+             OR model LIKE ? 
+             OR ukuran LIKE ?
+             OR CONCAT(TRIM(id_bahan), ' - ', TRIM(model), ' - ', TRIM(ukuran)) LIKE ?
+        )`);
+        params.push(term, term, term, term);
+      }
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
