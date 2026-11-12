@@ -24,6 +24,8 @@ interface SearchableSelectProps {
   onAdd?: () => void;
   onEdit?: () => void;
   clearable?: boolean;
+  onSearch?: (query: string) => void;
+  loading?: boolean;
 }
 
 export default function SearchableSelect({
@@ -41,11 +43,20 @@ export default function SearchableSelect({
   onAdd,
   onEdit,
   clearable = true,
+  onSearch,
+  loading = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const hasUserTyped = useRef(false);
+
+  // Keep latest onSearch ref to prevent timer resets when parent component re-renders
+  const onSearchRef = useRef(onSearch);
+  useEffect(() => {
+    onSearchRef.current = onSearch;
+  }, [onSearch]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -60,10 +71,21 @@ export default function SearchableSelect({
     };
   }, []);
 
+  // Debounced server search when onSearch is provided
+  useEffect(() => {
+    if (!onSearchRef.current) return;
+    if (!hasUserTyped.current && searchQuery === '') return;
+    const timer = setTimeout(() => {
+      onSearchRef.current?.(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Focus search input when dropdown opens (if searchable)
   useEffect(() => {
     if (isOpen && searchable) {
       setSearchQuery('');
+      hasUserTyped.current = false;
       setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -72,16 +94,17 @@ export default function SearchableSelect({
 
   const selectedOption = options.find((opt) => opt.value === value);
 
-  const filteredOptions = options.filter((opt) => {
-    if (!searchable) return true;
+  // Fast client-side multi-word filtering for instant responsiveness without flickering
+  const filteredOptions = React.useMemo(() => {
+    if (!searchable) return options;
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      opt.label.toLowerCase().includes(q) ||
-      opt.value.toLowerCase().includes(q) ||
-      (opt.subLabel && opt.subLabel.toLowerCase().includes(q))
-    );
-  });
+    if (!q) return options;
+    const words = q.split(/\s+/).filter(Boolean);
+    return options.filter((opt) => {
+      const target = `${opt.label} ${opt.value} ${opt.subLabel || ''}`.toLowerCase();
+      return words.every((w) => target.includes(w));
+    });
+  }, [options, searchable, searchQuery]);
 
   const handleSelect = (val: string) => {
     onChange(val);
@@ -181,7 +204,7 @@ export default function SearchableSelect({
 
       {/* Popover Dropdown Panel */}
       {isOpen && (
-        <div className="absolute left-0 top-full z-50 mt-1.5 min-w-[260px] sm:min-w-[320px] max-w-[90vw] sm:max-w-md w-max bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
+        <div className="absolute left-0 top-full z-50 mt-1.5 w-full min-w-[280px] sm:min-w-[340px] max-w-[90vw] bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
           {/* Search Box - Only rendered if searchable is true */}
           {searchable && (
             <div className="p-2.5 border-b border-slate-100 bg-slate-50/95 sticky top-0 z-10">
@@ -191,19 +214,29 @@ export default function SearchableSelect({
                   ref={inputRef}
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    hasUserTyped.current = true;
+                    setSearchQuery(e.target.value);
+                  }}
                   placeholder={searchPlaceholder}
                   className="w-full text-xs bg-white border border-slate-200 rounded-xl pl-8 pr-7 py-2 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-2xs"
                 />
-                {searchQuery && (
+                {loading ? (
+                  <div className="absolute right-2.5 pointer-events-none">
+                    <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-600 rounded-full animate-spin" />
+                  </div>
+                ) : searchQuery ? (
                   <button
                     type="button"
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => {
+                      hasUserTyped.current = true;
+                      setSearchQuery('');
+                    }}
                     className="absolute right-2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
                   >
                     <X className="w-3 h-3" />
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           )}
@@ -219,9 +252,21 @@ export default function SearchableSelect({
                 <span>+ Gunakan &quot;{searchQuery.trim()}&quot; (Baru)</span>
               </button>
             )}
-            {filteredOptions.length === 0 ? (
-              <div className="py-6 px-3 text-center text-slate-400 text-xs font-medium">
-                {allowCustom ? 'Tekan opsi di atas untuk memakai nilai baru' : 'Tidak ada data yang cocok'}
+            {options.length === 0 && loading ? (
+              <div className="min-h-[140px] py-8 px-3 text-center text-slate-400 text-xs font-medium flex items-center justify-center space-x-2">
+                <div className="w-3.5 h-3.5 border-2 border-emerald-500/30 border-t-emerald-600 rounded-full animate-spin" />
+                <span>Memuat data barang...</span>
+              </div>
+            ) : filteredOptions.length === 0 ? (
+              <div className="min-h-[140px] py-8 px-3 text-center text-slate-400 text-xs font-medium flex items-center justify-center space-x-2">
+                {loading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-emerald-500/30 border-t-emerald-600 rounded-full animate-spin" />
+                    <span>Mencari data barang...</span>
+                  </>
+                ) : (
+                  <span>{allowCustom ? 'Tekan opsi di atas untuk memakai nilai baru' : 'Tidak ada data yang cocok'}</span>
+                )}
               </div>
             ) : (
               <>

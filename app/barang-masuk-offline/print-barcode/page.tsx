@@ -35,6 +35,7 @@ interface PrintSettings {
   labelWidth: number; // in mm (33 for 33x15)
   labelHeight: number; // in mm (15 for 33x15)
   gapMiddle: number; // in mm (2)
+  col2Offset: number; // in mm (1.2 for shifting right column independently)
   marginLeft: number; // in mm (-1.2 for shifting left as requested)
   marginTop: number; // in mm (0)
   paddingTop: number; // in mm (1.8mm so Baris 1 matches Baris 2 and doesn't get pushed up)
@@ -44,16 +45,17 @@ interface PrintSettings {
   columns: 1 | 2;
 }
 
-// Default calibrated for Zebra 33x15 mm (2 Kolom): Baris 1 matched to Baris 2, shifted left
+// Default calibrated for Zebra 33x15 mm (2 Kolom): Baris 1 matched to Baris 2, shifted left, right column offset +1.2mm
 const DEFAULT_SETTINGS: PrintSettings = {
-  version: 6,
+  version: 7,
   preset: 'zebra_33x15',
   orientation: 'landscape', // Zebra ZDesigner standard accepted orientation
   rollWidth: 68, // 33mm + 2mm gap + 33mm = 68mm
   labelWidth: 33,
   labelHeight: 15,
   gapMiddle: 2,
-  marginLeft: -1.2, // Geser ke kiri 1.2mm agar bagian kiri pas di tengah stiker
+  col2Offset: 1.2, // Geser kolom kanan 1.2mm ke kanan agar huruf pertama dan barcode kanan tidak terpotong
+  marginLeft: -1.2, // Geser ke kiri 1.2mm agar kolom kiri pas di tengah stiker
   marginTop: 0,
   paddingTop: 1.8, // Turunkan 1.8mm agar Baris 1 persis sama seperti Baris 2 dan tidak terdorong ke atas
   barcodeHeight: 10,
@@ -87,7 +89,7 @@ function PrintBarcodeContent() {
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<boolean>(false);
 
-  // Load saved settings from localStorage, ensuring version 6 calibration is applied
+  // Load saved settings from localStorage, ensuring version 7 calibration is applied
   useEffect(() => {
     try {
       const saved = localStorage.getItem('pos_barcode_print_settings');
@@ -98,7 +100,15 @@ function PrintBarcodeContent() {
           localStorage.setItem('pos_barcode_print_settings', JSON.stringify(DEFAULT_SETTINGS));
           return;
         }
-        setSettings((prev) => ({ ...prev, ...parsed }));
+        // Upgrade to v7 while preserving user-adjusted values if present
+        const upgraded: PrintSettings = {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          version: 7,
+          col2Offset: parsed.col2Offset !== undefined ? parsed.col2Offset : DEFAULT_SETTINGS.col2Offset,
+        };
+        setSettings(upgraded);
+        localStorage.setItem('pos_barcode_print_settings', JSON.stringify(upgraded));
       }
     } catch {
       // Ignore
@@ -127,6 +137,7 @@ function PrintBarcodeContent() {
         labelWidth: 33,
         labelHeight: 15,
         gapMiddle: 2,
+        col2Offset: 1.2,
         columns: 2,
         marginLeft: -1.2,
         marginTop: 0,
@@ -143,6 +154,7 @@ function PrintBarcodeContent() {
         labelWidth: 37,
         labelHeight: 19.5,
         gapMiddle: 2,
+        col2Offset: 0,
         columns: 2,
         marginLeft: 0,
         marginTop: 0,
@@ -159,6 +171,7 @@ function PrintBarcodeContent() {
         labelWidth: 38,
         labelHeight: 28,
         gapMiddle: 2,
+        col2Offset: 0,
         columns: 2,
         marginLeft: 0,
         marginTop: 0,
@@ -175,6 +188,7 @@ function PrintBarcodeContent() {
         labelWidth: 38,
         labelHeight: 28,
         gapMiddle: 0,
+        col2Offset: 0,
         columns: 1,
         marginLeft: 0,
         marginTop: 0,
@@ -286,6 +300,19 @@ function PrintBarcodeContent() {
     );
   }
 
+  // Calculate dynamic gap & total row width taking into account col2Offset
+  const effectiveGap = Math.max(
+    0,
+    Number(((settings.gapMiddle || 2) + (settings.col2Offset || 0)).toFixed(2))
+  );
+  const totalRowWidth = Number(
+    (
+      settings.columns === 2
+        ? settings.labelWidth * 2 + effectiveGap
+        : settings.labelWidth
+    ).toFixed(2)
+  );
+
   return (
     <>
       <style jsx global>{`
@@ -310,7 +337,7 @@ function PrintBarcodeContent() {
 
           .barcode-row-container {
             display: block !important;
-            width: ${settings.rollWidth}mm !important;
+            width: ${totalRowWidth}mm !important;
             height: ${settings.labelHeight}mm !important;
             max-height: ${settings.labelHeight}mm !important;
             margin-left: ${settings.marginLeft}mm !important;
@@ -329,7 +356,7 @@ function PrintBarcodeContent() {
             display: table !important;
             border-collapse: collapse !important;
             table-layout: fixed !important;
-            width: ${settings.rollWidth}mm !important;
+            width: ${totalRowWidth}mm !important;
             height: ${settings.labelHeight}mm !important;
             margin: 0 !important;
             padding: 0 !important;
@@ -395,16 +422,18 @@ function PrintBarcodeContent() {
                     <span>Cetak Barcode Zebra ({settings.labelWidth}x{settings.labelHeight} mm)</span>
                   </h1>
                   <p className="text-[11px] text-slate-500">
-                    Posisi Baris 1 &amp; 2 Disamakan Presisi • Geser Kiri Aktif ({settings.marginLeft} mm)
+                    Posisi Kiri: {settings.marginLeft} mm • Geser Kanan: {settings.col2Offset > 0 ? `+${settings.col2Offset}` : (settings.col2Offset || 0)} mm • Posisi Atas: {settings.paddingTop} mm
                   </p>
                 </div>
               </div>
 
               {/* Middle: Quick Alignment Adjusters & Presets */}
               <div className="flex flex-wrap items-center gap-2">
-                {/* Quick Geser Kiri / Kanan */}
+                {/* Quick Geser Semua Kolom (Kiri / Kanan) */}
                 <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-600">Geser Kiri/Kanan:</span>
+                  <span className="text-[10px] font-bold text-slate-600" title="Geser semua kolom secara bersamaan">
+                    Geser Semua:
+                  </span>
                   <button
                     type="button"
                     onClick={() =>
@@ -413,8 +442,8 @@ function PrintBarcodeContent() {
                         preset: 'custom',
                       })
                     }
-                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition"
-                    title="Geser Lebih ke Kiri (-0.5 mm)"
+                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition cursor-pointer"
+                    title="Geser Semua ke Kiri (-0.5 mm)"
                   >
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
@@ -429,12 +458,50 @@ function PrintBarcodeContent() {
                         preset: 'custom',
                       })
                     }
-                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition"
-                    title="Geser ke Kanan (+0.5 mm)"
+                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition cursor-pointer"
+                    title="Geser Semua ke Kanan (+0.5 mm)"
                   >
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {/* Quick Geser Kolom Kanan Saja (Khusus Stiker Kanan) */}
+                {settings.columns === 2 && (
+                  <div className="flex items-center space-x-1 bg-emerald-50/70 px-2 py-1 rounded-xl border border-emerald-300">
+                    <span className="text-[10px] font-bold text-emerald-800" title="Geser HANYA stiker sebelah kanan (kolom kiri tetap)">
+                      Kolom Kanan:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSettings({
+                          col2Offset: Number(((settings.col2Offset || 0) - 0.3).toFixed(1)),
+                          preset: 'custom',
+                        })
+                      }
+                      className="p-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded text-emerald-800 transition cursor-pointer"
+                      title="Geser Kolom Kanan ke Kiri (-0.3 mm)"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-xs font-mono font-bold text-emerald-900 px-1">
+                      {settings.col2Offset > 0 ? `+${settings.col2Offset}` : (settings.col2Offset || 0)} mm
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateSettings({
+                          col2Offset: Number(((settings.col2Offset || 0) + 0.3).toFixed(1)),
+                          preset: 'custom',
+                        })
+                      }
+                      className="p-1 bg-white hover:bg-emerald-100 border border-emerald-300 rounded text-emerald-800 transition cursor-pointer"
+                      title="Geser Kolom Kanan ke Kanan (+0.3 mm)"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Quick Jarak Atas Baris 1 */}
                 <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-xl border border-slate-200">
@@ -447,7 +514,7 @@ function PrintBarcodeContent() {
                         preset: 'custom',
                       })
                     }
-                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition"
+                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition cursor-pointer"
                     title="Naikkan ke Atas (-0.3 mm)"
                   >
                     <ChevronUp className="w-3.5 h-3.5" />
@@ -463,7 +530,7 @@ function PrintBarcodeContent() {
                         preset: 'custom',
                       })
                     }
-                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition"
+                    className="p-1 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 transition cursor-pointer"
                     title="Turunkan ke Bawah (+0.3 mm)"
                   >
                     <ChevronDown className="w-3.5 h-3.5" />
@@ -546,7 +613,7 @@ function PrintBarcodeContent() {
 
             {/* ADVANCED SETTINGS PANEL (EXPANDABLE) */}
             {showAdvanced && (
-              <div className="mt-3 pt-3 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs bg-slate-50/70 p-3 rounded-xl border">
+              <div className="mt-3 pt-3 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-xs bg-slate-50/70 p-3 rounded-xl border">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-600 mb-1">
                     Lebar Stiker (mm)
@@ -586,7 +653,7 @@ function PrintBarcodeContent() {
 
                 <div>
                   <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                    Margin Kiri (mm)
+                    Margin Kiri (Semua) (mm)
                   </label>
                   <input
                     type="number"
@@ -600,6 +667,25 @@ function PrintBarcodeContent() {
                     }
                     className="w-full px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs"
                     title="Nilai minus (misal -1.2) menggeser stiker lebih ke sebelah kiri"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                    Geser Kolom Kanan (mm)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.2"
+                    value={settings.col2Offset || 0}
+                    onChange={(e) =>
+                      updateSettings({
+                        col2Offset: Number(e.target.value),
+                        preset: 'custom',
+                      })
+                    }
+                    className="w-full px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs"
+                    title="Menggeser HANYA stiker sebelah kanan ke kanan (+) atau ke kiri (-)"
                   />
                 </div>
 
@@ -678,7 +764,7 @@ function PrintBarcodeContent() {
             <div className="mt-2.5 p-2 bg-emerald-50/80 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 flex items-start space-x-2">
               <HelpCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold">Baris 1 &amp; 2 Disamakan Presisi:</span> Posisi atas disetel ke <strong>{settings.paddingTop} mm</strong> (menurunkan baris 1 agar sama persis seperti baris 2 &amp; tidak terdorong ke atas), dan posisi kiri digeser ke kiri <strong>{settings.marginLeft} mm</strong>. Anda bisa langsung menekan tombol panah kiri/kanan/atas/bawah di atas untuk mengatur cepat.
+                <span className="font-bold">Tips Penyesuaian Presisi:</span> Gunakan tombol <strong>&quot;Geser Semua&quot;</strong> ({settings.marginLeft} mm) untuk menggeser kedua stiker sekaligus, dan tombol <strong>&quot;Kolom Kanan&quot;</strong> ({settings.col2Offset > 0 ? `+${settings.col2Offset}` : (settings.col2Offset || 0)} mm) untuk menggeser stiker sebelah kanan saja agar huruf pertama &amp; barcode kanan tidak terpotong.
               </div>
             </div>
           </div>
@@ -731,7 +817,7 @@ function PrintBarcodeContent() {
                       key={rIdx}
                       className="barcode-row-container mb-3 print:mb-0"
                       style={{
-                        width: `${settings.rollWidth}mm`,
+                        width: `${totalRowWidth}mm`,
                         height: `${settings.labelHeight}mm`,
                         marginLeft: `${settings.marginLeft}mm`,
                         boxSizing: 'border-box',
@@ -740,7 +826,7 @@ function PrintBarcodeContent() {
                       <table
                         className="barcode-table"
                         style={{
-                          width: `${settings.rollWidth}mm`,
+                          width: `${totalRowWidth}mm`,
                           height: `${settings.labelHeight}mm`,
                           borderCollapse: 'collapse',
                           tableLayout: 'fixed',
@@ -886,11 +972,11 @@ function PrintBarcodeContent() {
                               </div>
                             </td>
 
-                            {/* Gap Middle (2mm) */}
+                            {/* Gap Middle (dynamically adjusted by col2Offset) */}
                             {settings.columns === 2 && (
                               <td
                                 style={{
-                                  width: `${settings.gapMiddle}mm`,
+                                  width: `${effectiveGap}mm`,
                                   padding: 0,
                                 }}
                               />

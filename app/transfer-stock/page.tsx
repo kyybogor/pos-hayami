@@ -53,6 +53,7 @@ interface ProductOption {
   ukuran: string;
   uom: string;
   stock: number;
+  barcode?: string;
   nama_barang: string;
   label: string;
 }
@@ -96,6 +97,7 @@ export default function TransferStockPage() {
   // Item Selector in Form
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [selectedProductKey, setSelectedProductKey] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null);
   const [itemQty, setItemQty] = useState<number>(1);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -108,11 +110,15 @@ export default function TransferStockPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Fetch Available Stock Products for Selection
-  const fetchProducts = useCallback(async () => {
+  // Fetch Available Stock Products for Selection (supports remote search query)
+  const fetchProducts = useCallback(async (search = '') => {
     setLoadingProducts(true);
     try {
-      const res = await fetch('/api/transfer-stock/products');
+      const params = new URLSearchParams();
+      if (search.trim()) {
+        params.append('q', search.trim());
+      }
+      const res = await fetch(`/api/transfer-stock/products?${params.toString()}`);
       const data = await res.json();
       if (res.ok && data.success) {
         setProductOptions(data.products || []);
@@ -195,8 +201,9 @@ export default function TransferStockPage() {
     setFormKeterangan('');
     setCartItems([]);
     setSelectedProductKey('');
+    setSelectedProduct(null);
     setItemQty(1);
-    fetchProducts();
+    fetchProducts('');
   };
 
   const handleAddItemToCart = () => {
@@ -205,9 +212,11 @@ export default function TransferStockPage() {
       return;
     }
 
-    const selectedProd = productOptions.find(
-      (p) => `${p.id_bahan}|${p.model}|${p.ukuran}` === selectedProductKey
-    );
+    const selectedProd =
+      selectedProduct ||
+      productOptions.find(
+        (p) => `${p.id_bahan}|${p.model}|${p.ukuran}` === selectedProductKey
+      );
 
     if (!selectedProd) {
       showToast('error', 'Barang tidak ditemukan.');
@@ -266,6 +275,7 @@ export default function TransferStockPage() {
     }
 
     setSelectedProductKey('');
+    setSelectedProduct(null);
     setItemQty(1);
   };
 
@@ -799,14 +809,24 @@ export default function TransferStockPage() {
                         options={productOptions.map((p) => ({
                           value: `${p.id_bahan}|${p.model}|${p.ukuran}`,
                           label: p.label,
+                          subLabel: p.barcode ? `Barcode: ${p.barcode}` : undefined,
                         }))}
                         value={selectedProductKey}
-                        onChange={(val) => setSelectedProductKey(val)}
+                        onChange={(val) => {
+                          setSelectedProductKey(val);
+                          const found = productOptions.find(
+                            (p) => `${p.id_bahan}|${p.model}|${p.ukuran}` === val
+                          );
+                          setSelectedProduct(found || null);
+                        }}
+                        onSearch={fetchProducts}
+                        loading={loadingProducts}
                         placeholder={
-                          loadingProducts
+                          loadingProducts && productOptions.length === 0
                             ? 'Memuat barang berstok...'
                             : '-- Pilih Barang yang Akan Ditransfer --'
                         }
+                        searchPlaceholder="Ketik bahan, model, ukuran, atau barcode..."
                       />
                     </div>
 

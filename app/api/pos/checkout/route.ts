@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // 2. GENERATE TRANSACTION ID (e.g. SO-JTG/2609/0001)
+      // 2. GENERATE TRANSACTION ID (e.g. SO/2609/0001)
       const now = new Date();
       const mm = String(now.getMonth() + 1).padStart(2, '0');
       const yy = String(now.getFullYear()).slice(-2);
@@ -127,8 +127,8 @@ export async function POST(request: NextRequest) {
         seqNo = Number(setupRows[0].ket3);
       } else {
         const [maxSoRows] = await connection.query<RowDataPacket[]>(
-          `SELECT id_transaksi FROM tb_barang_keluar WHERE id_transaksi LIKE ?`,
-          [`SO-${branchCode}/${yy}${mm}/%`]
+          `SELECT id_transaksi FROM tb_barang_keluar WHERE id_transaksi LIKE ? OR id_transaksi LIKE ?`,
+          [`SO/${yy}${mm}/%`, `SO-%/${yy}${mm}/%`]
         );
         let maxFoundSo = 0;
         for (const row of maxSoRows) {
@@ -142,8 +142,8 @@ export async function POST(request: NextRequest) {
         seqNo = maxFoundSo + 1;
       }
 
-      // Collision check to guarantee unique id_transaksi
-      let id_transaksi = `SO-${branchCode}/${yy}${mm}/${String(seqNo).padStart(4, '0')}`;
+      // Collision check to guarantee unique id_transaksi (Format: SO/YYMM/XXXX)
+      let id_transaksi = `SO/${yy}${mm}/${String(seqNo).padStart(4, '0')}`;
       let checkSoAttempts = 0;
       while (checkSoAttempts < 1000) {
         const [soExist] = await connection.query<RowDataPacket[]>(
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
           break;
         }
         seqNo++;
-        id_transaksi = `SO-${branchCode}/${yy}${mm}/${String(seqNo).padStart(4, '0')}`;
+        id_transaksi = `SO/${yy}${mm}/${String(seqNo).padStart(4, '0')}`;
         checkSoAttempts++;
       }
 

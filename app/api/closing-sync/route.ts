@@ -20,6 +20,8 @@ const POS_TABLES_TO_SYNC = [
   'inv_adjust_out',
   'inv_adjust',
   'tb_stock',
+  'transfer_stock',
+  'transfer_stock_detail',
   'tb_bahan',
   'tb_customer',
   'tb_karyawan',
@@ -174,9 +176,11 @@ export async function POST() {
 
       // B. Fetch server columns and local columns to detect any missing columns
       let serverCols = new Set<string>();
+      let serverColRows: any[] = [];
       try {
-        const [serverColRows]: any = await serverConn.query(`SHOW COLUMNS FROM \`${tableName}\``);
-        serverCols = new Set((serverColRows || []).map((c: any) => c.Field));
+        const [colRows]: any = await serverConn.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        serverColRows = colRows || [];
+        serverCols = new Set(serverColRows.map((c: any) => c.Field));
       } catch (colErr: any) {
         console.warn(`[Closing Sync] Could not fetch columns for ${tableName} on server:`, colErr.message);
         continue;
@@ -218,8 +222,28 @@ export async function POST() {
 
       const colNamesStr = safeColumns.map((col) => `\`${col}\``).join(', ');
 
-      // D. Batch REPLACE INTO with 500 rows per batch
+      // D. Batch insert / sync with 500 rows per batch
       const BATCH_SIZE = 500;
+      const isTransferStock = tableName.toLowerCase() === 'transfer_stock';
+
+      // Khusus tabel transfer_stock: kolom 'approve' dikecualikan dari proses update
+      // agar status approval di server online tidak tertimpa/hilang saat closing sync berkala
+      const primaryKeyCols = new Set(
+        serverColRows
+          .filter((c: any) => c.Key === 'PRI')
+          .map((c: any) => String(c.Field).toLowerCase())
+      );
+      if (isTransferStock) {
+        primaryKeyCols.add('id_transfer');
+      }
+
+      const updateCols = safeColumns.filter((col) => {
+        const cLower = col.toLowerCase();
+        if (isTransferStock && cLower === 'approve') return false;
+        if (primaryKeyCols.has(cLower)) return false;
+        return true;
+      });
+
       for (let i = 0; i < localRows.length; i += BATCH_SIZE) {
         const batch = localRows.slice(i, i + BATCH_SIZE);
         const valuePlaceholders: string[] = [];
@@ -233,11 +257,25 @@ export async function POST() {
           }
         }
 
-        const replaceSql = `REPLACE INTO \`${tableName}\` (${colNamesStr}) VALUES ${valuePlaceholders.join(
-          ', '
-        )}`;
+        let syncSql: string;
+        if (isTransferStock) {
+          if (updateCols.length > 0) {
+            const updateClause = updateCols.map((col) => `\`${col}\` = VALUES(\`${col}\`)`).join(', ');
+            syncSql = `INSERT INTO \`${tableName}\` (${colNamesStr}) VALUES ${valuePlaceholders.join(
+              ', '
+            )} ON DUPLICATE KEY UPDATE ${updateClause}`;
+          } else {
+            syncSql = `INSERT IGNORE INTO \`${tableName}\` (${colNamesStr}) VALUES ${valuePlaceholders.join(
+              ', '
+            )}`;
+          }
+        } else {
+          syncSql = `REPLACE INTO \`${tableName}\` (${colNamesStr}) VALUES ${valuePlaceholders.join(
+            ', '
+          )}`;
+        }
 
-        await serverConn.query(replaceSql, queryValues);
+        await serverConn.query(syncSql, queryValues);
       }
 
       syncedTableCount++;

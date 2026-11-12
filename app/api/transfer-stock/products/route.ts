@@ -10,18 +10,33 @@ export async function GET(req: Request) {
     let whereSql = 'WHERE stock > 0 AND id_bahan IS NOT NULL AND id_bahan != ""';
     const params: any[] = [];
 
-    if (search.trim() !== '') {
-      whereSql += ' AND (id_bahan LIKE ? OR model LIKE ? OR ukuran LIKE ?)';
-      const q = `%${search.trim()}%`;
-      params.push(q, q, q);
+    const rawSearch = search.trim();
+    if (rawSearch !== '') {
+      const cleanDigits = rawSearch.replace(/\D/g, '');
+      const candidate7 = cleanDigits.length === 9 ? cleanDigits.slice(0, 7) : '';
+
+      const words = rawSearch.split(/\s+/).filter(Boolean);
+      for (const w of words) {
+        if (candidate7) {
+          whereSql += ' AND (id_bahan LIKE ? OR model LIKE ? OR ukuran LIKE ? OR COALESCE(barcode, "") LIKE ? OR barcode = ?)';
+          const pattern = `%${w}%`;
+          params.push(pattern, pattern, pattern, pattern, candidate7);
+        } else {
+          whereSql += ' AND (id_bahan LIKE ? OR model LIKE ? OR ukuran LIKE ? OR COALESCE(barcode, "") LIKE ?)';
+          const pattern = `%${w}%`;
+          params.push(pattern, pattern, pattern, pattern);
+        }
+      }
     }
 
+    const limit = rawSearch !== '' ? 300 : 500;
+
     const querySql = `
-      SELECT id_bahan, model, ukuran, uom, stock
+      SELECT id_bahan, model, ukuran, uom, stock, barcode
       FROM tb_stock
       ${whereSql}
-      ORDER BY stock DESC, id_bahan ASC, model ASC, ukuran ASC
-      LIMIT 100
+      ORDER BY ${rawSearch !== '' ? 'id_bahan ASC, model ASC, ukuran ASC' : 'stock DESC, id_bahan ASC, model ASC, ukuran ASC'}
+      LIMIT ${limit}
     `;
 
     const [rows] = await pool.query<RowDataPacket[]>(querySql, params);
@@ -39,8 +54,9 @@ export async function GET(req: Request) {
         ukuran: ukuranStr,
         uom: uomStr,
         stock: stockVal,
+        barcode: r.barcode || '',
         nama_barang: `${idBahan}-${modelStr}-${ukuranStr}`,
-        label: `${idBahan}-${modelStr}-${ukuranStr} (Stock: ${stockVal} ${uomStr})`,
+        label: `${idBahan} - ${modelStr} - ${ukuranStr} (Stok: ${stockVal} ${uomStr})`,
       };
     });
 
